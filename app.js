@@ -853,7 +853,7 @@ function drawUI(g){
   ex.textContent=document.fullscreenElement?"⤡":"⤢";g.appendChild(ex);
   drawButtons(g,L,LBTN);
   if(mode==="inventory"||mode==="supplies") drawList(g,R);else drawButtons(g,R,RBTN);
-  if(IS_DESIGN&&mode==="settings") drawSettings(g);
+  if(mode==="settings") drawSettings(g);
 }
 
 /* ================= сборка кадра ================= */

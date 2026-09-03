@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8420"],
       "port": 8420
+    },
+    {
+      "name": "phaser",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": ["phaser-game/node_modules/vite/bin/vite.js", "phaser-game", "--port", "5173", "--strictPort"],
+      "port": 5173
     }
   ]
 }
