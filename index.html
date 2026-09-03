@@ -1,109 +1,17 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Схема зон комнаты</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Sad Little Cat</title>
 <style>
-  :root{--ground:#3B3340;--ground-deep:#332C39;--panel:#2E2833;--chalk:#EBE2D5;
-    --chalk-soft:rgba(235,226,213,.55);--chalk-faint:rgba(235,226,213,.22);
-    --amber:#E8A33D;--line:rgba(235,226,213,.14);--cat:#9FC4C0}
-  *{box-sizing:border-box}
-  html,body{margin:0;height:100%}
-  body{background:var(--ground);color:var(--chalk);
-    font-family:"Avenir Next","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
-  .wrap{display:grid;grid-template-columns:minmax(0,1fr) 330px;height:100vh}
-  @media (max-width:900px){.wrap{grid-template-columns:1fr;height:auto}}
-  .stage{position:relative;display:flex;flex-direction:column;min-width:0;height:100vh}
-  @media (max-width:900px){.stage{height:auto}}
-  .stage-head{padding:16px 24px 6px}
-  h1{font-size:17px;font-weight:600;margin:0}
-  .hint{color:var(--chalk-soft);font-size:12.5px;margin:0}
-  .canvas{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:8px 24px 24px}
-  @media (max-width:900px){.canvas{padding:8px 12px 16px}}
-  .canvas:fullscreen{background:#0E0C11;padding:0}
-  .canvas:fullscreen svg{border:none;border-radius:0;height:100%}
-  svg{display:block;height:100%;width:auto;max-width:100%;aspect-ratio:540/960;
-    background:var(--ground-deep);border:1px solid var(--chalk-faint);border-radius:16px;
-    touch-action:none;user-select:none}
-  @media (max-width:900px){svg{height:auto;width:100%;max-height:82vh}}
-  .side{background:var(--panel);border-left:1px solid var(--line);padding:18px 20px;overflow-y:auto}
-  @media (max-width:900px){.side{border-left:none;border-top:1px solid var(--line)}}
-  .side h2{font-size:12.5px;font-weight:600;margin:0 0 4px;color:var(--chalk-soft)}
-  .side p.note{font-size:12px;color:var(--chalk-soft);margin:0 0 12px}
-  .row{display:flex;gap:6px;margin-bottom:10px}
-  .row button{flex:1;font:inherit;font-size:11.5px;padding:5px 4px;color:var(--chalk);
-    background:transparent;border:1px solid var(--chalk-faint);border-radius:2px;cursor:pointer}
-  .row button[aria-pressed="true"]{border-color:var(--amber);color:var(--amber)}
-  .row button:disabled{opacity:.35;cursor:default}
-  .legend{font-size:12px;color:var(--chalk-soft);display:grid;gap:5px;margin-bottom:18px}
-  .legend div{display:flex;align-items:center;gap:8px}
-  .legend i{width:8px;height:8px;border-radius:1px;flex:none}
-  .cat-tall{background:#C9B8D8}.cat-mid{background:var(--cat)}.cat-low{background:#D9C08E}
-  .cat-wall{background:#D79A9A}.cat-ceil{background:var(--amber)}.cat-surface{background:#A8B98C}
-  #cap,#nav{font-size:12px;margin-bottom:18px;padding:9px;border-radius:3px;
-    border:1px solid var(--chalk-faint);color:var(--chalk-soft)}
-  #cap.bad,#nav.bad{border-color:var(--amber);color:var(--amber)}
-  textarea{width:100%;height:130px;background:var(--ground-deep);color:var(--chalk);
-    border:1px solid var(--chalk-faint);border-radius:2px;padding:9px;
-    font-family:inherit;font-size:11.5px;line-height:1.45;resize:vertical}
-  .side .act{font:inherit;font-size:12.5px;color:var(--chalk);background:transparent;
-    border:1px solid var(--chalk-faint);border-radius:2px;padding:6px 11px;cursor:pointer}
-  .zonelabel{font-size:10px;fill:var(--chalk-faint);pointer-events:none}
-  .itemlabel{font-size:11px;fill:var(--chalk);pointer-events:none;paint-order:stroke;
-    stroke:rgba(45,38,50,.85);stroke-width:3px;stroke-linejoin:round}
-  .openlabel{font-size:10px;fill:rgba(232,163,61,.8);pointer-events:none}
-  .btnlabel{font-size:10px;fill:var(--chalk-soft);pointer-events:none}
-  .celllabel{font-size:8.5px;fill:var(--chalk-soft);pointer-events:none}
-  .setlabel{font-size:11px;fill:var(--chalk);pointer-events:none}
-  .setval{font-size:11px;fill:var(--amber);pointer-events:none}
-  .hudnum{font-size:13px;fill:var(--chalk);pointer-events:none;font-weight:600}
-  .bubble{font-size:10.5px;fill:#2E2833;pointer-events:none}
-  #draglayer,#walk{pointer-events:none}
-  svg.dragging #items,svg.dragging #catlayer,svg.dragging #openings{pointer-events:none}
-  .iconbg{fill:rgba(235,226,213,.07);stroke:rgba(235,226,213,.42);stroke-width:1.1}
-  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
-  /* ================= режимы приложения ================= */
-  body.mode-game .side{display:none}
-  body.mode-game .wrap{grid-template-columns:1fr}
+  html, body { margin: 0; height: 100%; background: #1a1620; overscroll-behavior: none; }
+  #app { display: flex; align-items: center; justify-content: center; height: 100%; }
+  canvas { image-rendering: pixelated; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="stage">
-    <div class="stage-head">
-      <h1>Схема зон комнаты</h1>
-      <p class="hint">Настройки, инвентарь и запасы — внутри экрана.</p>
-    </div>
-    <div class="canvas" id="canvas">
-      <svg id="scene" viewBox="0 0 540 960" preserveAspectRatio="xMidYMid meet"
-           role="application" aria-label="Изометрическая схема комнаты"></svg>
-    </div>
-  </div>
-  <aside class="side">
-    <h2>Проёмы</h2>
-    <p class="note">Активны при открытом инвентаре. Дверь и окно перетаскиваются на ближние стены прямо на схеме.</p>
-    <div class="row"><button id="dLeft">Дверь: левая</button><button id="dFront">Дверь: ближняя</button></div>
-    <div class="row"><button id="wRight">Окно: правая</button><button id="wFront">Окно: ближняя</button></div>
-    <h2>Вместимость</h2>
-    <div id="cap"></div>
-    <h2>Место для кота</h2>
-    <div id="nav"></div>
-    <h2>Что куда встаёт</h2>
-    <div class="legend">
-      <div><i class="cat-tall"></i> высокое — вдоль дальних стен</div>
-      <div><i class="cat-mid"></i> среднее — стены и середина</div>
-      <div><i class="cat-low"></i> низкое — любая зона пола</div>
-      <div><i class="cat-wall"></i> настенное</div>
-      <div><i class="cat-ceil"></i> потолочное</div>
-      <div><i class="cat-surface"></i> поверх мебели</div>
-    </div>
-    <h2>Раскладка для промта</h2>
-    <textarea id="out" readonly></textarea>
-    <div style="margin-top:8px"><button class="act" id="btnCopy">Скопировать</button></div>
-  </aside>
-</div>
-<script src="app.js"></script>
+<div id="app"></div>
+<script type="module" src="/src/main.ts"></script>
 </body>
 </html>
