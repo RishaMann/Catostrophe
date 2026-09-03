@@ -48,9 +48,14 @@ export const DIR_SPRITES: DirSprite[] = [
   // ракурс со спины — WALK_AWAY, поэтому обе диагонали теперь берут его же
   // (тот же приём «2 ракурса + отзеркаливание», что и раньше, только с
   // WALK_AWAY вместо WALK_BACK как базового «спинного» ракурса).
-  { frames: WALK_AWAY, flip: true, idle: "sit_back_a", sitAlt: "sit_back_b", lie: "lie_back_a" }, // back-left (влево-вверх) — зеркало WALK_AWAY
+  // Важно: сам кадр WALK_AWAY НЕ нейтрален — тело/голова там от природы
+  // повёрнуты в экранную ЛЕВУЮ сторону (хвост загнут вправо), проверено
+  // попиксельно (public/art/cats/<skin>/walk_away_2.png, оба скина). Значит
+  // «как есть» (flip:false) уже тянет влево-назад, а «влево-вверх» —
+  // наоборот его прямое совпадение, «вправо-вверх» — зеркало.
+  { frames: WALK_AWAY, flip: false, idle: "sit_back_a", sitAlt: "sit_back_b", lie: "lie_back_a" }, // back-left (влево-вверх) — WALK_AWAY как есть, кадр и так смотрит влево
   { frames: WALK_AWAY, flip: false, idle: "sit_back_a", sitAlt: "sit_back_b", lie: "lie_back_a" }, // away-from-viewer — прямое совпадение (кадр «прямо в спину»)
-  { frames: WALK_AWAY, flip: false, idle: "sit_back_a", sitAlt: "sit_back_b", lie: "lie_back_a" }, // back-right (вправо-вверх) — WALK_AWAY как есть
+  { frames: WALK_AWAY, flip: true, idle: "sit_back_a", sitAlt: "sit_back_b", lie: "lie_back_a" }, // back-right (вправо-вверх) — зеркало WALK_AWAY
 ];
 
 // Все файлы, которые нужно загрузить в preload() — идентичный список для
