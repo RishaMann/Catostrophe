@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { TEXT_RESOLUTION, applyRenderScale } from "../room/RoomScene";
 import type { RoomScene } from "../room/RoomScene";
 import { ITEM_CATALOG, SUPPLIES, ItemCategory } from "../room/itemCatalog";
+import { CAT_SKINS, CAT_SKIN_LABELS, CatSkin } from "../cat/catSprites";
 
 // Перенос нижнего меню и обвязки старого app.js (LBTN/RBTN + drawSettings +
 // drawList + drawHUD) — но как отдельная, ВСЕГДА активная игровая сцена
@@ -44,7 +45,7 @@ const STORAGE_KEY = "sadLittleCat.playerSettings";
 interface PlayerSettings {
   floorSize: number;
   zoom: number;
-  catOn: boolean;
+  skin: CatSkin;
 }
 function loadSettings(): PlayerSettings {
   try {
@@ -56,7 +57,7 @@ function loadSettings(): PlayerSettings {
   return defaultSettings();
 }
 function defaultSettings(): PlayerSettings {
-  return { floorSize: 8, zoom: 1, catOn: true };
+  return { floorSize: 8, zoom: 1, skin: "redfat" };
 }
 function saveSettings(s: PlayerSettings) {
   try {
@@ -84,7 +85,7 @@ export class UIScene extends Phaser.Scene {
   private nextPageBtn!: Phaser.GameObjects.Rectangle;
   private floorTrack!: Phaser.GameObjects.Rectangle;
   private zoomTrack!: Phaser.GameObjects.Rectangle;
-  private catToggleBtn!: Phaser.GameObjects.Rectangle;
+  private skinBtns: Partial<Record<CatSkin, Phaser.GameObjects.Rectangle>> = {};
   private resetBtn!: Phaser.GameObjects.Rectangle;
   private clearBtn!: Phaser.GameObjects.Rectangle;
   private fullscreenBtn!: Phaser.GameObjects.Rectangle;
@@ -119,10 +120,15 @@ export class UIScene extends Phaser.Scene {
 
     this.floorTrack = this.makeSliderZone(96, PANEL.y + 26, 250, () => (this.draggingSlider = "floor"));
     this.zoomTrack = this.makeSliderZone(96, PANEL.y + 46, 250, () => (this.draggingSlider = "zoom"));
-    this.catToggleBtn = this.makeButton(PANEL.x + 8, PANEL.y + 66, 246, 18, () => {
-      this.settings.catOn = !this.settings.catOn;
-      saveSettings(this.settings);
-      this.room().catEnabled = this.settings.catOn;
+    // «Кот в комнате» — раньше один тумблер вкл/выкл, теперь выбор
+    // персонажа: две кнопки-переключателя, активная подсвечена, клик
+    // переключает скин (и текстуру, и скорость — CatAgent.speed по CAT_SPEED).
+    CAT_SKINS.forEach((skin, i) => {
+      this.skinBtns[skin] = this.makeButton(PANEL.x + 8 + i * 123, PANEL.y + 66, 119, 18, () => {
+        this.settings.skin = skin;
+        saveSettings(this.settings);
+        this.room().setCatSkin(skin);
+      });
     });
     this.resetBtn = this.makeButton(PANEL.x + 8, PANEL.y + 90, 78, 18, () => this.room().resetToDefaultFurniture());
     this.clearBtn = this.makeButton(PANEL.x + 92, PANEL.y + 90, 78, 18, () => this.room().clearFurniture());
@@ -155,7 +161,7 @@ export class UIScene extends Phaser.Scene {
     // Стартовые значения применяем следующим тиком — RoomScene уже успела
     // отрисовать первый кадр со своими дефолтами к этому моменту.
     this.time.delayedCall(0, () => {
-      this.room().catEnabled = this.settings.catOn;
+      this.room().setCatSkin(this.settings.skin);
       this.applyZoom();
     });
   }
@@ -174,7 +180,14 @@ export class UIScene extends Phaser.Scene {
 
     this.drawHUD(room);
     this.drawBottomBar();
-    this.setPanelInteractive(this.mode === "settings", [this.floorTrack, this.zoomTrack, this.catToggleBtn, this.resetBtn, this.clearBtn, this.fullscreenBtn]);
+    this.setPanelInteractive(this.mode === "settings", [
+      this.floorTrack,
+      this.zoomTrack,
+      ...(Object.values(this.skinBtns) as Phaser.GameObjects.Rectangle[]),
+      this.resetBtn,
+      this.clearBtn,
+      this.fullscreenBtn,
+    ]);
     this.setCellButtonsInteractive(this.mode === "inventory" || this.mode === "supplies");
 
     if (this.mode === "settings") this.drawSettingsPanel(room);
@@ -237,7 +250,9 @@ export class UIScene extends Phaser.Scene {
     this.addLabel(PANEL.x + 8, PANEL.y + 12, "Настройки сцены", "#ebe2d5", "left");
     this.drawSlider(g, PANEL.y + 26, floorShown, FLOOR_MIN, FLOOR_MAX, "Комната: " + floorShown + "×" + floorShown);
     this.drawSlider(g, PANEL.y + 46, this.settings.zoom, ZOOM_MIN, ZOOM_MAX, "Зум: " + Math.round(this.settings.zoom * 100) + "%");
-    this.drawToggle(g, PANEL.x + 8, PANEL.y + 66, 246, 18, this.settings.catOn, "Кот: " + (this.settings.catOn ? "в комнате" : "нет"));
+    CAT_SKINS.forEach((skin, i) => {
+      this.drawToggle(g, PANEL.x + 8 + i * 123, PANEL.y + 66, 119, 18, this.settings.skin === skin, CAT_SKIN_LABELS[skin]);
+    });
     this.drawToggle(g, PANEL.x + 8, PANEL.y + 90, 78, 18, false, "Сброс");
     this.drawToggle(g, PANEL.x + 92, PANEL.y + 90, 78, 18, false, "Очистить");
     this.drawToggle(g, PANEL.x + 176, PANEL.y + 90, 78, 18, this.scale.isFullscreen, this.scale.isFullscreen ? "Свернуть" : "Экран");

@@ -22,7 +22,7 @@ import { HexCell } from "../iso/hexLattice";
 import { findPath } from "../nav/astar";
 
 // Скорость — экранные px/с, до масштабирования (§7.3, §15).
-export const CAT_SPEED = { baton: 34, shilo: 52 } as const;
+export const CAT_SPEED = { redfat: 34, siamese: 52 } as const;
 
 // Шесть спрайтовых направлений в экранных углах: 4 из §7.4 плюс «строго от
 // зрителя» (-90°) и «строго на зрителя» (90°) — ровно то, что дают
@@ -76,7 +76,7 @@ export class CatAgent {
   private legTarget: HexCell | null = null;
   private lastDirChangeAt = -Infinity;
 
-  constructor(start: HexCell, speed: number = CAT_SPEED.baton) {
+  constructor(start: HexCell, speed: number = CAT_SPEED.redfat) {
     this.cell = start;
     this.sx = start.sx;
     this.sy = start.sy;

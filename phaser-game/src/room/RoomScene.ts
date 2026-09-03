@@ -3,8 +3,8 @@ import { projX, projY, unproject } from "../iso/projection";
 import { HexCell, nearestCell } from "../iso/hexLattice";
 import { FurnitureInstance, S, furnitureDepthPoint } from "../iso/squareGrid";
 import { depthOf } from "../iso/depth";
-import { CatAgent } from "../cat/CatAgent";
-import { CAT_FRAME_NAMES, CatSkin, DIR_SPRITES, textureKey } from "../cat/catSprites";
+import { CatAgent, CAT_SPEED } from "../cat/CatAgent";
+import { CAT_FRAME_NAMES, CAT_SKINS, CatSkin, DIR_SPRITES, SIAMESE_PLAY_FRAMES, textureKey } from "../cat/catSprites";
 import { buildFloorPatch, NavPatch } from "../nav/navPatch";
 import { buildSlots, nearestSlot, Slot } from "./placementMode";
 import { DEFAULT_ROOM, RoomSpec } from "./RoomSpec";
@@ -26,6 +26,7 @@ const LINE = 0xebe2d5;
 // тянется вверх от неё). Меньше — меньше ложных «сквозь стену»/«сквозь мебель».
 const CAT_ART_SCALE = 0.075; // исходники ~250-330px, коту на сцене место ~19-25px
 const WALK_FRAME_DIST = 10; // экранных px пройденного пути на один кадр анимации ходьбы
+const PLAY_FRAME_DIST_MS = 90; // мс реального времени на один кадр siamese_play.gif
 
 // Дверь/окно — перенос door/window из старого app.js: дверь на левой задней
 // стене (плоскость wx=0), окно на правой (wy=0), таскаются drag'ом прямо по
@@ -76,7 +77,7 @@ export class RoomScene extends Phaser.Scene {
   furniture: FurnitureInstance[] = []; // текущая расстановка — источник для моста §6 и debug
   patch!: NavPatch; // §7.5 — навигационный патч пола (решётка + блокировки)
   cat!: CatAgent;
-  catSkin: CatSkin = "baton";
+  catSkin: CatSkin = "redfat";
   catEnabled = true; // §«настройки сцены» — тумблер «кот в комнате», debug-панель
   private supplyDragId: string | null = null; // id из itemCatalog.SUPPLIES, если сейчас тащат корм/игрушку из UIScene
   door = { pos: 0.35 }; // доля 0..1 вдоль левой задней стены (wx=0)
@@ -105,8 +106,16 @@ export class RoomScene extends Phaser.Scene {
   }
 
   preload() {
-    for (const name of CAT_FRAME_NAMES) {
-      this.load.image(textureKey(this.catSkin, name), `/art/cats/${this.catSkin}/${name}.png`);
+    // Грузим кадры ОБОИХ скинов сразу (не только текущего) — переключение
+    // персонажа в настройках (UIScene) должно быть мгновенным, без повторной
+    // загрузки текстур.
+    for (const skin of CAT_SKINS) {
+      for (const name of CAT_FRAME_NAMES) {
+        this.load.image(textureKey(skin, name), `/art/cats/${skin}/${name}.png`);
+      }
+    }
+    for (const name of SIAMESE_PLAY_FRAMES) {
+      this.load.image(textureKey("siamese", name), `/art/cats/siamese/${name}.png`);
     }
   }
 
@@ -259,8 +268,18 @@ export class RoomScene extends Phaser.Scene {
       default:
         frameName = dirSprite.idle;
     }
-    img.setTexture(textureKey(this.catSkin, frameName));
-    img.setFlipX(dirSprite.flip);
+
+    // Игра с игрушкой у сиамского кота — отдельная раскладка кадров
+    // (siamese_play.gif, без ракурсов/флипа, см. catSprites.ts) вместо
+    // общего bounce-приёма выше.
+    if (cat.state === "jump" && this.catSkin === "siamese") {
+      const idx = Math.floor(performance.now() / PLAY_FRAME_DIST_MS) % SIAMESE_PLAY_FRAMES.length;
+      img.setTexture(textureKey("siamese", SIAMESE_PLAY_FRAMES[idx]));
+      img.setFlipX(false);
+    } else {
+      img.setTexture(textureKey(this.catSkin, frameName));
+      img.setFlipX(dirSprite.flip);
+    }
     img.setPosition(this.origin.x + cat.sx, this.origin.y + cat.sy + bobY);
     img.setTint(cat.earTwitchMs > 0 ? 0xffb0b0 : 0xffffff);
     img.setDepth(
@@ -625,7 +644,16 @@ export class RoomScene extends Phaser.Scene {
 
   private spawnCat() {
     const start = pickStartCell(this.patch.lattice);
-    this.cat = new CatAgent(start);
+    this.cat = new CatAgent(start, CAT_SPEED[this.catSkin]);
+  }
+
+  // Настройки (UIScene) — переключение персонажа («Рыжий кот»/«Сиамский
+  // кот»): текстура берётся из this.catSkin каждый кадр в updateCatSprite(),
+  // так что смены достаточно тут; скорость у CatAgent меняем отдельно —
+  // разные кошки ходят с разной скоростью (CAT_SPEED).
+  setCatSkin(skin: CatSkin) {
+    this.catSkin = skin;
+    if (this.cat) this.cat.speed = CAT_SPEED[skin];
   }
 
   // §8 — каждый предмет получает свой Graphics + .depth = depthOf(...), один
