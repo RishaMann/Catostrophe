@@ -21,6 +21,7 @@
   // предметы (I.depth(zmap,zid), диапазон примерно 0..2*floor), и кот
   // (cat.x+cat.y — та же шкала) просто получают Phaser .depth и рисуются в
   // правильном порядке автоматически.
+  const BG_DEPTH = -2;      // фоновая панорама комнаты — под сеткой
   const SHELL_DEPTH = -1;   // пол, стены, проёмы, проходимость (debug)
   const ZONE_DEPTH = -0.5;  // подсветка пустых зон при драге — под предметами,
                              // но взаимоисключающе с ними (заняты либо зона, либо предмет)
@@ -29,9 +30,29 @@
   const UI_DEPTH = 10000;   // нижние панели/HUD — всегда поверх сцены
   const UI_TEXT_DEPTH = 10001;
 
+  // Арт кота — калибровано под исходники ~300px при params.zoom=1 (floor 8).
+  // Не константа: кот должен расти вместе с комнатой при приближении сцены
+  // (params.zoom), поэтому это БАЗА — реальный масштаб = CAT_ART_SCALE_BASE
+  // * params.zoom, считается в create() (см. spawn кота), не тут.
+  const CAT_ART_SCALE_BASE = 0.18;
+  // На сколько единиц cat.ph нужно накопить на один кадр цикла ходьбы —
+  // cat.ph растёт на 9/сек во время ходьбы (tick()), поэтому ~1.1 даёт
+  // бодрый шаг без мельтешения кадров.
+  const WALK_FRAME_STEP = 1.1;
+
   const clamp = I.clamp;
   const rnd = (a, b) => a + Math.random() * (b - a);
   const pick = a => a[Math.floor(Math.random() * a.length)];
+
+  // Диапазоны движения двери/окна вдоль стены + вдоль примыкающего переднего
+  // (открытого) края — один в один RANGE из исходного app.js: там же было
+  // выяснено, где дверь/окно ещё не упираются в угол.
+  const RANGE = { left: [0.6, 3.35], frontLeft: [1.8, 4.4], right: [0.4, 2.6], frontRight: [1.8, 4.2] };
+  function nearestOnSeg(px, py, a, b) {
+    const vx = b[0] - a[0], vy = b[1] - a[1];
+    const t = clamp(((px - a[0]) * vx + (py - a[1]) * vy) / (vx * vx + vy * vy), 0, 1);
+    return { t, d: Math.hypot(a[0] + vx * t - px, a[1] + vy * t - py) };
+  }
 
   function inPoly(pt, poly) {
     let c = false;
@@ -40,6 +61,27 @@
       if (((yi > pt[1]) !== (yj > pt[1])) && (pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi)) c = !c;
     }
     return c;
+  }
+
+  // Какие файлы из sprites/<Персонаж>/ понадобятся движку — из конфига
+  // персонажа: цикл ходьбы + по одному кадру на каждую из статичных поз, плюс
+  // (не у всех есть) покадровая анимация игры. Список только тех кадров, что
+  // реально названы в конфиге — лишние файлы в sprites/ (если есть) грузить
+  // не нужно.
+  function catFrameNames(cfg) {
+    const set = new Set();
+    (cfg.sprites.walk || []).forEach(f => set.add(f));
+    ['idle', 'sit', 'lie', 'eatDig', 'jump'].forEach(k => { if (cfg.sprites[k]) set.add(cfg.sprites[k]); });
+    // Любое поле sprites.* вида {frames,count,frameMs} — покадровая анимация
+    // (у сиамского: playToy1/playToy2/playFed/playIdle) — собираем кадры
+    // общим правилом, не перечисляя имена полей: новый персонаж или новый
+    // триггер добавляется только в config.json, тут ничего не трогать.
+    Object.values(cfg.sprites).forEach(v => {
+      if (v && typeof v === 'object' && v.frames && v.count) {
+        for (let i = 0; i < v.count; i++) set.add(v.frames + '_' + i);
+      }
+    });
+    return [...set];
   }
 
   /* ---------- пул текстов: переиспользуем, а не пересоздаём каждый кадр ---------- */
@@ -80,9 +122,61 @@
       // Путь резолвится от index.html (корень catroom/), не от game.js —
       // сцены лежат в src/scenes/, а не в scenes/ рядом с index.html.
       this.load.json(this.sceneName, 'src/scenes/' + this.sceneName + '.json');
+      // Cats/manifest.json перечисляет папки-персонажей — сами config.json
+      // (и тем более PNG из sprites/, чей список кадров вообще не известен
+      // заранее) на этом этапе ещё грузить нельзя: их пути зависят от
+      // содержимого манифеста, который сам ещё не пришёл.
+      this.load.json('catManifest', 'Cats/manifest.json');
+      // Фоновая арт-панорама комнаты — тот же кадр 9:16, что и канвас
+      // (819×1456 = 540×960), поэтому ложится на весь канвас без перекоса и
+      // совпадает по перспективе со стенами/полом, которые рисует drawShell().
+      this.load.image('roomBg', 'art/room_bg.jpg');
     }
 
+    // Персонажи кота грузятся в 3 прохода, каждый — заново запущенный
+    // this.load.start() из ПОЛНОСТЬЮ осевшего состояния загрузчика (а не
+    // дозапись очереди из середины текущего прохода — так и пробовали
+    // сначала, официальный на вид приём 'дописывать в filecomplete' в этой
+    // версии Phaser файлы в список кладёт, но так и не начинает их
+    // качать — зависает без единой ошибки в консоли, поймано только через
+    // scene.load.state/list в консоли браузера, не по логам):
+    //   1) preload(): манифест + сама сцена (create() ждёт этого сам, штатно)
+    //   2) create(): манифест уже есть → грузим config.json персонажей
+    //   3) их callback: конфиги уже есть → знаем имена кадров → грузим PNG
+    // Только после (3) — весь остальной прежний create() (комната/кот/UI/ввод).
     create() {
+      this.catNames = this.cache.json.get('catManifest');
+      this.load.once('complete', () => this.createStep2LoadImages());
+      this.catNames.forEach(name => this.load.json('catcfg-' + name, `Cats/${name}/config.json`));
+      this.load.start();
+    }
+
+    // ~70 отдельных PNG (по кадрам, названным в конфигах персонажей) — через
+    // this.load.image()+load.start() зависает без ошибок где-то на 32-м файле
+    // (похоже на maxParallelDownloads Phaser'а: первая пачка догружается,
+    // очередь из list в queue/inflight дальше сама не переливается). Вместо
+    // борьбы с этим — обычные браузерные Image, у них такого лимита нет,
+    // регистрируем в Phaser вручную через textures.addImage().
+    createStep2LoadImages() {
+      const jobs = [];
+      this.catNames.forEach(name => {
+        const cfg = this.cache.json.get('catcfg-' + name);
+        catFrameNames(cfg).forEach(fn => {
+          jobs.push({ key: `cat_${name}_${fn}`, url: `Cats/${name}/sprites/${fn}.png` });
+        });
+      });
+      let remaining = jobs.length;
+      const done = () => { if (--remaining <= 0) this.createStep3Finish(); };
+      if (!remaining) { this.createStep3Finish(); return; }
+      jobs.forEach(job => {
+        const img = new Image();
+        img.onload = () => { this.textures.addImage(job.key, img); done(); };
+        img.onerror = () => { console.error('не загрузился кадр кота:', job.url); done(); };
+        img.src = job.url;
+      });
+    }
+
+    createStep3Finish() {
       // состояние сцены — копия конфига, чтобы не портить загруженный JSON
       const s = this.cache.json.get(this.sceneName);
       this.st = {
@@ -90,25 +184,48 @@
         light: { ...s.light }, place: { ...s.place }
       };
       this.params = { ...s.params };
+
+      // Какой персонаж активен сейчас — первый по списку при старте.
+      // Скорость/частоты поведения берутся из конфига активного персонажа
+      // при каждом обращении (activeCatConfig()), не кэшируются отдельно,
+      // кроме this.catSpeed — он читается в tick() на каждом кадре, дешевле
+      // держать под рукой.
+      this.catCharacter = this.catNames[0];
+      this.catSpeed = this.activeCatConfig().speed;
+
       this.cat = {
         x: s.cat.x, y: s.cat.y, st: 'idle', t: 1, ph: 0, dir: 1,
-        path: [], after: null, bubble: null, bt: 0, jump: 0
+        path: [], after: null, bubble: null, bt: 0, jump: 0, stateElapsedMs: 0,
+        // playSegment — какое поле sprites.* сейчас проигрывается покадрово
+        // (playToy1/playToy2/playFed у сиамского), null — обычная статичная
+        // поза. lastPlayAt — когда в последний раз играли игрушкой, для
+        // различения «первый раз» (playToy1) и «снова в течение 5с» (playToy2).
+        playSegment: null, lastPlayAt: -Infinity
       };
       this.mood = 62; this.fish = 1247; this.gems = 12;
       this.mode = 'view';
       this.pageInv = 0; this.pageSup = 0;
       this.showWalk = false; this.showLabels = DEBUG; this.showEmpty = DEBUG; this.catOn = true;
       this.drag = null;
+      this.openingDrag = null; // 'door' | 'window' | null — см. dragOpening()
       this.uiDirty = true;
       this.shellDirty = true;
 
-      // --- слои: оболочка сцены, подсветка пустых зон при драге, кот, пул
-      // предметов (по одному Graphics+Text на занятую зону), UI поверх всего ---
+      // --- слои: фон-панорама, оболочка сцены, подсветка пустых зон при
+      // драге, кот, пул предметов (по одному Graphics+Text на занятую зону),
+      // UI поверх всего ---
+      this.add.image(0, 0, 'roomBg').setOrigin(0, 0)
+        .setDisplaySize(SCREEN_W, SCREEN_H).setDepth(BG_DEPTH);
       this.gShell = this.add.graphics().setDepth(SHELL_DEPTH);
       this.tShell = new TextPool(this, TEXT_DEPTH);
       this.zoneGfx = this.add.graphics().setDepth(ZONE_DEPTH);
       this.tZones = new TextPool(this, TEXT_DEPTH);
+      // Кот — спрайт (Image), не векторная фигура: тень/реплика остаются на
+      // отдельном Graphics чуть позади него.
       this.gCat = this.add.graphics().setDepth(0);
+      this.catImg = this.add.image(0, 0, this.catFrameKey(this.activeCatConfig().sprites.idle))
+        .setOrigin(0.5, 1)
+        .setScale(CAT_ART_SCALE_BASE * this.params.zoom);
       this.tBubble = null;
       this.itemGfx = new Map(); // zid -> { g: Graphics, t: Text|null }
       this.gUI = this.add.graphics().setDepth(UI_DEPTH);
@@ -116,11 +233,34 @@
 
       this.rebuild();
 
+      // Переход в/из полного экрана — асинхронный (сам браузер решает, когда
+      // его завершить), иконку ⤢/⤡ обновляем по факту через это событие, не
+      // сразу по клику.
+      document.addEventListener('fullscreenchange', () => { this.uiDirty = true; });
+
       this.input.on('pointerdown', p => this.onDown(p));
-      this.input.on('pointermove', p => { if (this.drag) { this.drag.p = [p.worldX, p.worldY]; } });
-      this.input.on('pointerup', p => this.onUp(p));
+      this.input.on('pointermove', p => {
+        if (this.openingDrag) { this.dragOpening(p.worldX, p.worldY); return; }
+        if (this.drag) { this.drag.p = [p.worldX, p.worldY]; }
+      });
+      this.input.on('pointerup', p => {
+        if (this.openingDrag) { this.openingDrag = null; return; }
+        this.onUp(p);
+      });
 
       this.idleCycle();
+    }
+
+    /* ---------- персонажи кота ---------- */
+    activeCatConfig() { return this.cache.json.get('catcfg-' + this.catCharacter); }
+    catFrameKey(frameName) { return `cat_${this.catCharacter}_${frameName}`; }
+    // Кнопка в нижнем правом меню (см. drawUI/onDown) — цикличное
+    // переключение, не отдельный экран выбора: персонажей мало, и так проще.
+    cycleCatCharacter() {
+      const i = this.catNames.indexOf(this.catCharacter);
+      this.catCharacter = this.catNames[(i + 1) % this.catNames.length];
+      this.catSpeed = this.activeCatConfig().speed;
+      this.uiDirty = true;
     }
 
     /* ---------- пересборка сцены и навигации ---------- */
@@ -180,6 +320,88 @@
       if (stroke !== null && stroke !== undefined) { g.lineStyle(sw || 1.2, stroke, 1); g.strokePoints(p, close !== false); }
     }
 
+    // Заливка стены + обводка ТРЁХ рёбер (пол, ближний и дальний вертикальные
+    // края) без верхнего. Верх стены раньше рисовался тоже — на переднем
+    // плане линия проходила прямо по высоким предметам (шкаф, стеллаж) и
+    // визуально их перекрывала (полупрозрачные боксы, линия за ними всё
+    // равно просвечивала). Заливка стены (без обводки) сама по себе
+    // предметы не загораживает — убрана только сама линия.
+    wallFace(g, pts, fillAlpha) {
+      if (fillAlpha) this.polyOn(g, pts, COL.chalk, fillAlpha, null);
+      g.lineStyle(1.2, COL.chalk, 1);
+      g.lineBetween(pts[0][0], pts[0][1], pts[1][0], pts[1][1]); // низ, по полу
+      g.lineBetween(pts[1][0], pts[1][1], pts[2][0], pts[2][1]); // ближний вертикальный край
+      g.lineBetween(pts[3][0], pts[3][1], pts[0][0], pts[0][1]); // дальний край (угол комнаты)
+    }
+
+    // Геометрия проёмов — общая для отрисовки (drawShell) и хит-теста
+    // (hitDoor/hitWindow), чтобы клик и рисунок никогда не разошлись.
+    doorPoly() {
+      const F = I.PROJ.F, d0 = this.st.door.pos, d1 = d0 + DOOR_W;
+      return this.st.door.side === 'left'
+        ? [I.P(0, d0), I.P(0, d1), I.P(0, d1, DOOR_H), I.P(0, d0, DOOR_H)]
+        : [I.P(d0, F), I.P(d1, F), I.P(d1, F, DOOR_H), I.P(d0, F, DOOR_H)];
+    }
+    winPoly() {
+      const F = I.PROJ.F, w0 = this.st.win.pos, w1 = w0 + WIN_W;
+      return this.st.win.side === 'right'
+        ? [I.P(w0, 0, WIN_Z0), I.P(w1, 0, WIN_Z0), I.P(w1, 0, WIN_Z1), I.P(w0, 0, WIN_Z1)]
+        : [I.P(F, w0, 0.08), I.P(F, w1, 0.08), I.P(F, w1, STUB), I.P(F, w0, STUB)];
+    }
+    hitDoor(x, y) { return inPoly([x, y], this.doorPoly()); }
+    hitWindow(x, y) { return inPoly([x, y], this.winPoly()); }
+
+    // Точка крепления лампы/люстры на потолке — тот же квадрат-подсказка,
+    // что уже рисовался в drawZoneOverlay (амбер-рамка вокруг this.st.light),
+    // теперь ещё и хватается/двигается, как дверь/окно.
+    lightPoly() {
+      const L = this.st.light;
+      return [I.P(L.x - .5, L.y - .5, WALL), I.P(L.x + .5, L.y - .5, WALL),
+      I.P(L.x + .5, L.y + .5, WALL), I.P(L.x - .5, L.y + .5, WALL)];
+    }
+    hitLight(x, y) { return inPoly([x, y], this.lightPoly()); }
+    // Обратная проекция для точки НА ПОТОЛКЕ (z=WALL), не на полу (z=0) —
+    // I.unP этого не умеет (только пол), поэтому та же поправка на WALL*ZH,
+    // что была в light-ветке startMove() исходного app.js.
+    unProjectCeil(sx, sy) {
+      const u = (sx - OX) / I.PROJ.TW, v = (sy - I.PROJ.OY + WALL * I.PROJ.ZH) / I.PROJ.TH;
+      return [(u + v) / 2, (v - u) / 2];
+    }
+
+    /* ==================== ДВЕРЬ/ОКНО — ПЕРЕТАСКИВАНИЕ ====================
+       Раньше двигались только по своей задней стене; на самом деле в
+       исходном app.js (и уже в zone-логике iso.js — dynamicZones давно умеет
+       door.side==='frontLeft'/win.side==='frontRight') дверь/окно едут ЗА
+       УГОЛ на примыкающий передний (открытый) край тоже. Не хватало только
+       самого перетаскивания в движке — вот оно, один в один RANGE/nearestOnSeg
+       из app.js. Доступно только при открытом инвентаре — как и вся
+       остальная перестановка. */
+    dragOpening(x, y) {
+      const F = I.PROJ.F;
+      if (this.openingDrag === 'door') {
+        const e1 = Math.min(RANGE.left[1], this.LAY.Wend - DOOR_W);
+        const e2 = Math.min(RANGE.frontLeft[1], F - DOOR_W - 0.3);
+        const A = nearestOnSeg(x, y, I.P(0, RANGE.left[0]), I.P(0, e1));
+        const B = nearestOnSeg(x, y, I.P(RANGE.frontLeft[0], F), I.P(e2, F));
+        if (A.d <= B.d + 18) { this.st.door.side = 'left'; this.st.door.pos = RANGE.left[0] + A.t * (e1 - RANGE.left[0]); }
+        else { this.st.door.side = 'frontLeft'; this.st.door.pos = RANGE.frontLeft[0] + B.t * (e2 - RANGE.frontLeft[0]); }
+        this.st.door.pos = Math.round(this.st.door.pos * 10) / 10;
+      } else if (this.openingDrag === 'window') {
+        const e1 = Math.min(RANGE.right[1], this.LAY.Wend - WIN_W);
+        const e2 = Math.min(RANGE.frontRight[1], F - WIN_W - 0.3);
+        const A = nearestOnSeg(x, y, I.P(RANGE.right[0], 0), I.P(e1, 0));
+        const B = nearestOnSeg(x, y, I.P(F, RANGE.frontRight[0]), I.P(F, e2));
+        if (A.d <= B.d + 18) { this.st.win.side = 'right'; this.st.win.pos = RANGE.right[0] + A.t * (e1 - RANGE.right[0]); }
+        else { this.st.win.side = 'frontRight'; this.st.win.pos = RANGE.frontRight[0] + B.t * (e2 - RANGE.frontRight[0]); }
+        this.st.win.pos = Math.round(this.st.win.pos * 10) / 10;
+      } else if (this.openingDrag === 'light') {
+        const [lx, ly] = this.unProjectCeil(x, y);
+        this.st.light.x = Math.round(clamp(lx, 1, F - 1) * 10) / 10;
+        this.st.light.y = Math.round(clamp(ly, 1, F - 1) * 10) / 10;
+      }
+      this.rebuild();
+    }
+
     /* ==================== ОБОЛОЧКА СЦЕНЫ (пол/стены/проёмы/debug-проходимость) ====================
        Перерисовывается только когда this.shellDirty — взводится в rebuild()
        (проходимость зависит от NAV) и при переключении «Проходимость» в
@@ -190,39 +412,43 @@
       g.clear(); this.tShell.begin();
       const poly = (pts, fill, fa, stroke, sw, close) => this.polyOn(g, pts, fill, fa, stroke, sw, close);
 
-      // --- пол и две стены ---
+      // --- пол и две стены (без верхней линии — см. wallFace) ---
+      // Серой заливки на стенах больше нет — вместо неё сквозь контур видна
+      // фоновая панорама (BG_DEPTH, под gShell). Обводка граней и пол остаются.
       poly([I.P(0, 0), I.P(F, 0), I.P(F, F), I.P(0, F)], COL.chalk, 0.045, COL.chalk, 1.2);
-      poly([I.P(0, 0), I.P(F, 0), I.P(F, 0, WALL), I.P(0, 0, WALL)], COL.chalk, 0.03, COL.chalk, 1.2);
-      poly([I.P(0, 0), I.P(0, F), I.P(0, F, WALL), I.P(0, 0, WALL)], COL.chalk, 0.055, COL.chalk, 1.2);
+      this.wallFace(g, [I.P(0, 0), I.P(F, 0), I.P(F, 0, WALL), I.P(0, 0, WALL)], 0);
+      this.wallFace(g, [I.P(0, 0), I.P(0, F), I.P(0, F, WALL), I.P(0, 0, WALL)], 0);
 
       g.lineStyle(1, COL.chalk, 0.07);
       for (let i = 1; i < F; i++) {
         let a = I.P(i, 0), b = I.P(i, F); g.lineBetween(a[0], a[1], b[0], b[1]);
         a = I.P(0, i); b = I.P(F, i); g.lineBetween(a[0], a[1], b[0], b[1]);
       }
-      // бортики ближних рёбер
-      [[[0, F], [F, F]], [[F, 0], [F, F]]].forEach(([a, b]) => {
-        poly([I.P(a[0], a[1]), I.P(b[0], b[1]), I.P(b[0], b[1], STUB), I.P(a[0], a[1], STUB)],
-          null, 0, COL.chalk, 1);
-      });
+      // Бортики ближних рёбер (низкий декоративный "поребрик" вдоль открытых
+      // передних краёв пола) убраны — та же жалоба, что и на верх стены:
+      // лишняя линия поверх сцены, предметам ближнего плана мешала.
 
-      // --- проём двери ---
-      const d0 = this.st.door.pos, d1 = d0 + DOOR_W;
-      const dp = this.st.door.side === 'left'
-        ? [I.P(0, d0), I.P(0, d1), I.P(0, d1, DOOR_H), I.P(0, d0, DOOR_H)]
-        : [I.P(d0, F), I.P(d1, F), I.P(d1, F, DOOR_H), I.P(d0, F, DOOR_H)];
+      // --- проём двери и окна (геометрия — doorPoly()/winPoly(), общая с
+      // хит-тестом hitDoor()/hitWindow(), чтобы клик и рисунок не разошлись) ---
+      const dp = this.doorPoly();
       poly(dp, 0x000000, 0.30, COL.chalk, 1.1);
       let c = I.centroid(dp);
       this.tShell.put(c[0], c[1], 'дверь', 10, '#E8A33Dcc', 'center');
 
-      // --- проём окна ---
-      const w0 = this.st.win.pos, w1 = w0 + WIN_W;
-      const wp = this.st.win.side === 'right'
-        ? [I.P(w0, 0, WIN_Z0), I.P(w1, 0, WIN_Z0), I.P(w1, 0, WIN_Z1), I.P(w0, 0, WIN_Z1)]
-        : [I.P(F, w0, 0.08), I.P(F, w1, 0.08), I.P(F, w1, STUB), I.P(F, w0, STUB)];
+      const wp = this.winPoly();
       poly(wp, 0x7896BE, 0.22, COL.chalk, 1.1);
       c = I.centroid(wp);
       this.tShell.put(c[0], c[1], 'окно', 10, '#E8A33Dcc', 'center');
+
+      // --- точка крепления лампы/люстры — двигается, как дверь/окно (см.
+      // hitLight/dragOpening), только пока открыт инвентарь: это средство
+      // редактирования, а не часть неизменной геометрии комнаты. ---
+      if (this.mode === 'inventory') {
+        const lp = this.lightPoly();
+        poly(lp, COL.amber, 0.10, COL.amber, 1);
+        c = I.centroid(lp);
+        this.tShell.put(c[0], c[1], 'крепление', 9, '#E8A33Dcc', 'center');
+      }
 
       // --- проходимость (debug) ---
       if (this.showWalk && this.NAV) {
@@ -243,13 +469,17 @@
        но это лёгкая операция (пара десятков контуров зон, без стен/предметов),
        и раньше она уже была условной (showEmpty || placing). Показывается
        ТОЛЬКО когда предмет уже взят в руку (или включён debug-тумблер);
-       открытие инвентаря само по себе ничего не подсвечивает — легальность
-       зависит от предмета, а не от факта открытия меню. */
+       открытие инвентаря само по себе ничего на полу не подсвечивает —
+       легальность зависит от предмета, а не от факта открытия меню. */
     drawZoneOverlay() {
       const g = this.zoneGfx, F = I.PROJ.F;
       g.clear();
-      const placing = !!this.drag;
-      const active = this.showEmpty || placing;
+      // Драг корма/игрушки (kind:'supply') целится в кота/миску/пол, а не в
+      // зону по I.reject — подсветка «легальных зон» тут смысла не имеет и
+      // D.ITEMS[iid] для него не существует (это D.SUPPLIES), поэтому не
+      // считаем legal вовсе.
+      const placing = !!this.drag && this.drag.kind !== 'supply';
+      const active = this.showEmpty || !!this.drag;
       this.tZones.begin();
       if (active) {
         const poly = (pts, fill, fa, stroke, sw, close) => this.polyOn(g, pts, fill, fa, stroke, sw, close);
@@ -264,11 +494,10 @@
             this.tZones.put(cc[0], cc[1], z.ru, 9, '#EBE2D555', 'center');
           }
         });
-        // точка света на потолке — та же условная подсказка, что и у пустых зон
-        const L = this.st.light;
-        poly([I.P(L.x - .5, L.y - .5, WALL), I.P(L.x + .5, L.y - .5, WALL),
-        I.P(L.x + .5, L.y + .5, WALL), I.P(L.x - .5, L.y + .5, WALL)],
-          COL.amber, 0.10, COL.amber, 1);
+        // Точка крепления лампы больше не рисуется тут — переехала в
+        // drawShell() (lightPoly()), т.к. теперь она ещё и двигается, как
+        // дверь/окно (см. hitLight/dragOpening), и должна быть видна не
+        // только при showEmpty/драге, а всегда, пока открыт инвентарь.
       }
       this.tZones.end();
     }
@@ -346,83 +575,95 @@
 
     /* ==================== КОТ ====================
        Единственный слой, который честно перерисовывается каждый кадр — это
-       нормально: одна маленькая фигура, а не вся сцена. Глубина — cat.x+cat.y,
-       та же шкала, что и I.depth() у предметов, так что Phaser сам вставляет
-       кота в правильное место между их GameObject'ами. */
-    drawCatGfx() {
+       нормально: спрайт + маленькая тень/реплика, не вся сцена. Глубина —
+       cat.x+cat.y, та же шкала, что и I.depth() у предметов, так что Phaser
+       сам вставляет кота в правильное место между их GameObject'ами.
+
+       Арт — спрайты активного персонажа (this.catCharacter, Cats/<Имя>/), не
+       векторная фигура: за то, какой файл из sprites/ показывать в каком
+       состоянии, отвечает конфиг персонажа (activeCatConfig().sprites), не
+       код тут — чтобы завести нового кота, код менять не нужно. Состояния,
+       для которых в конфиге всего один статичный кадр (idle/sit/lie/eatDig),
+       так и остаются статичными позами — как и раньше у векторной фигуры,
+       различие между ними только в том, какая поза выбрана и лёгком покачивании
+       на eat/dig. Только у walk честный цикл кадров, и опционально (сейчас —
+       только у сиамского) у jump/игры — покадровая анимация sprites.play. */
+    updateCatVisual() {
       const g = this.gCat;
       g.clear();
-      if (!this.catOn) { if (this.tBubble) this.tBubble.setVisible(false); return; }
+      if (!this.catOn) {
+        this.catImg.setVisible(false);
+        if (this.tBubble) this.tBubble.setVisible(false);
+        return;
+      }
+      this.catImg.setVisible(true);
       const cat = this.cat;
-      g.setDepth(cat.x + cat.y);
+      const sprites = this.activeCatConfig().sprites;
       const b = I.P(cat.x, cat.y);
-      const u = I.PROJ.TW / 60 * 1.85, S = v => v * u, d = cat.dir;
-      const st = cat.st, ph = cat.ph;
-      const jy = st === 'jump' ? -Math.abs(Math.sin(ph * 2.2)) * S(16) : 0;
-      const X = lx => b[0] + d * lx, Y = ly => b[1] + jy + ly;
+      const depth = cat.x + cat.y;
 
-      // тень
+      // «Натуральная» (нефлипнутая) поза кадров sprites.walk смотрит влево на
+      // экране — тот же вывод, что уже делали на арте redfat/siamese в
+      // phaser-game: там для обоих скинов «смотрит влево» = не флипаем,
+      // «вправо» = флипаем. Проверено визуально: dir=1 (движение вправо) без
+      // флипа кот шёл задом (мордой влево при движении вправо).
+      let frameName, bobY = 0, flip = cat.dir > 0;
+      switch (cat.st) {
+        case 'walk': {
+          const frames = sprites.walk;
+          frameName = frames[Math.floor(cat.ph / WALK_FRAME_STEP) % frames.length];
+          break;
+        }
+        case 'sit':
+          frameName = sprites.sit;
+          break;
+        case 'lie':
+          frameName = sprites.lie;
+          break;
+        case 'eat':
+        case 'dig': {
+          // cat.playSegment === 'playFed' только когда покормили именно «с
+          // руки» (feedHand) — у feedBowl/feedFloor он остаётся null (сброшен
+          // в setSt), там всегда обычная статичная поза с покачиванием.
+          const seg = cat.playSegment && sprites[cat.playSegment];
+          if (seg) {
+            const idx = Math.min(seg.count - 1, Math.floor(cat.stateElapsedMs / seg.frameMs));
+            frameName = seg.frames + '_' + idx;
+            flip = false;
+          } else {
+            frameName = sprites.eatDig;
+            bobY = Math.sin(performance.now() / 90) * 2;
+          }
+          break;
+        }
+        case 'jump': {
+          const seg = cat.playSegment && sprites[cat.playSegment];
+          if (seg) {
+            const idx = Math.min(seg.count - 1, Math.floor(cat.stateElapsedMs / seg.frameMs));
+            frameName = seg.frames + '_' + idx;
+            flip = false; // покадровая анимация игры/еды всегда анфас, не зеркалим
+          } else {
+            frameName = sprites.jump;
+            bobY = -Math.abs(Math.sin(performance.now() / 140)) * 10;
+          }
+          break;
+        }
+        default:
+          frameName = sprites.idle;
+      }
+
+      this.catImg.setTexture(this.catFrameKey(frameName));
+      this.catImg.setFlipX(flip);
+      this.catImg.setPosition(b[0], b[1] + bobY);
+      this.catImg.setDepth(depth);
+
+      // тень и реплика — по-прежнему векторные, чуть позади спрайта
+      g.setDepth(depth - 0.001);
       g.fillStyle(0x000000, 0.32);
-      g.fillEllipse(b[0], b[1], S(28), S(28) * (I.PROJ.tilt || 0.5));
+      g.fillEllipse(b[0], b[1], 26, 26 * (I.PROJ.tilt || 0.5));
 
-      const LW = 1.5 * u;
-      const low = st === 'lie', sit = st === 'sit', eat = st === 'eat' || st === 'dig';
-      const bodyY = low ? -S(6) : sit ? -S(11) : -S(13);
-      const bRX = low ? S(18) : sit ? S(11) : S(15);
-      const bRY = low ? S(6) : sit ? S(11) : S(9);
-
-      // хвост
-      const w = Math.sin(ph * (low ? 0.6 : 1)) * S(low ? 3 : 5);
-      const tx = -bRX * 0.85;
-      const from = { x: tx, y: low ? bodyY + S(2) : bodyY };
-      const cp = low ? { x: tx - S(14), y: from.y + S(4) } : { x: tx - S(12), y: from.y - S(10) + w };
-      const to = low ? { x: tx - S(20), y: from.y + w * 0.4 } : { x: tx - S(6), y: from.y - S(22) + w };
-      const tail = [];
-      for (let i = 0; i <= 10; i++) {
-        const t = i / 10, q = 1 - t;
-        tail.push({
-          x: X(q * q * from.x + 2 * q * t * cp.x + t * t * to.x),
-          y: Y(q * q * from.y + 2 * q * t * cp.y + t * t * to.y)
-        });
-      }
-      g.lineStyle(LW, COL.cat, 1); g.strokePoints(tail, false);
-
-      // лапы
-      if (!low) {
-        const legs = sit ? [[-S(5), 0], [S(7), 0]] : [[-S(9), 0], [-S(3), 0], [S(4), 0], [S(9), 0]];
-        legs.forEach((Lg, i) => {
-          const sw = st === 'walk' ? Math.sin(ph + i * 1.6) * S(3.5) : 0;
-          const y0 = bodyY + bRY * 0.6, y1 = (sit && i === 0) ? bodyY + bRY * 0.4 : 0;
-          g.lineStyle(1.6 * u, COL.cat, 1);
-          g.lineBetween(X(Lg[0]), Y(y0), X(Lg[0] + sw), Y(y1));
-        });
-      }
-
-      // тело
-      g.fillStyle(COL.cat, 0.28); g.fillEllipse(X(0), Y(bodyY), bRX * 2, bRY * 2);
-      g.lineStyle(LW, COL.cat, 1); g.strokeEllipse(X(0), Y(bodyY), bRX * 2, bRY * 2);
-
-      // голова
-      const hx = low ? bRX * 0.72 : sit ? S(8) : S(12);
-      const hy = low ? bodyY - S(2) : sit ? bodyY - S(11) : bodyY - S(8) + (eat ? S(5) : 0);
-      g.fillStyle(COL.cat, 0.28); g.fillCircle(X(hx), Y(hy), S(7.5));
-      g.lineStyle(LW, COL.cat, 1); g.strokeCircle(X(hx), Y(hy), S(7.5));
-
-      const ear = pts => {
-        const p = pts.map(a => ({ x: X(a[0]), y: Y(a[1]) }));
-        g.fillStyle(COL.cat, 0.28); g.fillPoints(p, true);
-        g.lineStyle(LW, COL.cat, 1); g.strokePoints(p, true);
-      };
-      ear([[hx - S(5), hy - S(5)], [hx - S(1.5), hy - S(11)], [hx + S(1), hy - S(5.5)]]);
-      ear([[hx + S(2.5), hy - S(5.5)], [hx + S(6), hy - S(10.5)], [hx + S(7), hy - S(4)]]);
-
-      g.fillStyle(COL.chalk, 1);
-      g.fillCircle(X(hx + S(4)), Y(hy - S(0.5)), S(1.1));
-      g.fillCircle(X(hx + S(7)), Y(hy - S(0.5)), S(1.1));
-
-      // реплика — своя надпись (не пул: ровно один экземпляр, всегда поверх боксов)
       if (cat.bubble) {
-        const tw = cat.bubble.length * 5.6 + 18, bx = b[0] - tw / 2, by = b[1] - S(46) + jy;
+        const tw = cat.bubble.length * 5.6 + 18, bx = b[0] - tw / 2, by = b[1] - 58 + bobY;
         g.fillStyle(COL.chalk, 0.93);
         g.fillRoundedRect(bx, by - 20, tw, 26, 9);
         g.fillPoints([{ x: b[0] - 5, y: by + 6 }, { x: b[0] + 5, y: by + 6 }, { x: b[0], y: by + 13 }], true);
@@ -445,7 +686,10 @@
       ]);
       if (listOnR) this.drawList(g, this.ui.R);
       else this.drawButtons(g, this.ui.R, [
-        { id: 'quests', l: 'Задания' }, { id: 'shop', l: 'Магазин' }, { id: 'spare', l: '—' }
+        { id: 'quests', l: 'Задания' }, { id: 'shop', l: 'Магазин' },
+        // Раньше «—» (заглушка) — теперь выбор персонажа: тап переключает на
+        // следующего по списку из Cats/manifest.json, подпись — имя текущего.
+        { id: 'character', l: this.activeCatConfig().name }
       ]);
 
       if (this.mode === 'settings') this.drawSettings(g);
@@ -483,6 +727,21 @@
       g.fillStyle(0xC9B8D8, 0.4);
       g.fillPoints([{ x: 440, y: cy }, { x: 450, y: cy - 11 }, { x: 460, y: cy }, { x: 450, y: cy + 11 }], true);
       this.tUI.put(470, cy, String(this.gems), 12, '#EBE2D5', 'left', 'bold');
+
+      // Кнопка полного экрана — постоянная иконка в углу HUD, как в исходном
+      // app.js (там она открывала canvas.requestFullscreen()); тут то же
+      // самое через Phaser ScaleManager. Не тумблер в настройках — всегда на
+      // виду и всегда кликабельна, независимо от текущего режима (см. onDown).
+      const fr = this.fullscreenBtnRect();
+      g.fillStyle(COL.chalk, 0.08); g.fillRoundedRect(fr.x, fr.y, fr.w, fr.h, 8);
+      g.lineStyle(1.2, COL.chalk, 0.35); g.strokeRoundedRect(fr.x, fr.y, fr.w, fr.h, 8);
+      this.tUI.put(fr.x + fr.w / 2, fr.y + fr.h / 2, document.fullscreenElement ? '⤡' : '⤢', 14, '#EBE2D5cc', 'center');
+    }
+
+    fullscreenBtnRect() { return { x: 504, y: 42, w: 28, h: 28 }; }
+    hitFullscreenBtn(x, y) {
+      const r = this.fullscreenBtnRect();
+      return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
     }
 
     drawPanel(g, pn, active) {
@@ -606,11 +865,17 @@
       g.lineBetween(x - 7, p[1], x + 7, p[1]);
       g.lineBetween(x, p[1] - 7, x, p[1] + 7);
 
+      // Причина отказа / след подхода — только для мебели (kind !== 'supply');
+      // у корма/игрушки нет понятия «легальной зоны», D.ITEMS[iid] для него и
+      // не существует (это D.SUPPLIES). Куда его донесли — решает
+      // resolveSupplyDrop в onUp, тут только визуальный призрак.
+      if (this.drag.kind === 'supply') return;
       // Причина отказа / след подхода — для зоны прямо под призраком сейчас.
       // I.reject уже считался для подсветки зон (drawZoneOverlay), тут просто
       // берём его результат для ОДНОЙ конкретной наведённой зоны и показываем.
       const it = D.ITEMS[this.drag.iid], F = I.PROJ.F;
-      const hover = this.zones.find(z => !this.st.place[z.id] && inPoly([p[0], p[1]], I.zonePoly(z, F)));
+      const hover = this.zones.find(z =>
+        (!this.st.place[z.id] || z.id === this.drag.from) && inPoly([p[0], p[1]], I.zonePoly(z, F)));
       if (hover) {
         const reason = I.reject(hover, it);
         if (reason) {
@@ -634,6 +899,19 @@
 
     onDown(p) {
       const x = p.worldX, y = p.worldY;
+
+      // Кнопка полного экрана — первым делом, до всего остального: должна
+      // работать в любом режиме/панели, не только в 'view'. Через сам canvas
+      // напрямую (как toggleFull() в исходном app.js), не this.scale.start/
+      // stopFullscreen() — у Phaser ScaleManager в этой конфигурации падает
+      // (HierarchyRequestError: insertBefore, «new child contains parent»),
+      // сам браузерный Fullscreen API этим не страдает.
+      if (this.hitFullscreenBtn(x, y)) {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else this.game.canvas.requestFullscreen && this.game.canvas.requestFullscreen();
+        return;
+      }
+
       const listOnR = this.mode === 'inventory' || this.mode === 'supplies';
 
       // закрыть список
@@ -649,8 +927,11 @@
         }
         const cell = (this.listRects || []).find(c => c && x >= c.r.x && x <= c.r.x + c.r.w && y >= c.r.y && y <= c.r.y + c.r.h);
         if (cell) {
-          if (this.mode === 'inventory') { this.drag = { iid: cell.id, p: [x, y] }; this.uiDirty = true; }
-          else this.useSupply(cell.id);
+          // И предмет из инвентаря, и корм/игрушка из «Запасов» — одинаково
+          // берутся в руку и переносятся, а не срабатывают по одному тапу:
+          // куда донесли (до кота / до пола / до миски), то и произошло.
+          this.drag = { kind: this.mode === 'inventory' ? 'new' : 'supply', iid: cell.id, p: [x, y] };
+          this.uiDirty = true;
           return;
         }
       }
@@ -687,11 +968,11 @@
         }
       }
       if (!listOnR) {
-        const idsR = ['quests', 'shop', 'spare'];
+        const idsR = ['quests', 'shop', 'character'];
         for (let i = 0; i < 3; i++) {
           const b = R.btn[i];
           if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
-            if (idsR[i] === 'spare') return; // «—» — по брифу так и остаётся ничем
+            if (idsR[i] === 'character') { this.cycleCatCharacter(); return; }
             this.setMode(this.mode === idsR[i] ? 'view' : idsR[i]);
             return;
           }
@@ -701,22 +982,39 @@
       // панель поглощает тап целиком, до сцены он не доходит
       if (inPoly([x, y], L.poly) || inPoly([x, y], R.poly)) return;
 
-      // снятие предмета обратно в инвентарь — только при открытом инвентаре,
-      // перебор от ближних к зрителю, чтобы попадать в то, что сверху
+      // Дверь/окно — тоже только при открытом инвентаре, до захвата предмета
+      // (проверяем раньше него, иначе окно/дверь никогда не выигрывали бы у
+      // мебели, если их зоны перекрываются на экране).
+      if (this.mode === 'inventory' && !this.drag) {
+        if (this.hitDoor(x, y)) { this.openingDrag = 'door'; return; }
+        if (this.hitWindow(x, y)) { this.openingDrag = 'window'; return; }
+        if (this.hitLight(x, y)) { this.openingDrag = 'light'; return; }
+      }
+
+      // Взять уже стоящий предмет «в руку» — только при открытом инвентаре.
+      // Раньше тап сразу удалял предмет обратно в инвентарь без какого-либо
+      // перетаскивания; теперь это именно захват: предмет остаётся на месте
+      // (rebuild()/удаление из place — не тут, а в onUp по факту отпускания),
+      // и его можно либо перенести на новую легальную зону, либо вернуть в
+      // инвентарь, отпустив над правой панелью (см. onUp). Перебор от ближних
+      // к зрителю, чтобы попадать в то, что сверху.
       if (this.mode === 'inventory' && !this.drag) {
         const placed = Object.keys(this.st.place)
           .filter(k => k !== 'CEIL' && this.zmap[k])
           .sort((a, b) => I.depth(this.zmap, b) - I.depth(this.zmap, a));
         for (const zid of placed) {
           if (inPoly([x, y], I.zonePoly(this.zmap[zid], I.PROJ.F))) {
-            delete this.st.place[zid]; this.rebuild(); this.uiDirty = true; return;
+            this.drag = { kind: 'existing', from: zid, iid: this.st.place[zid], p: [x, y] };
+            this.uiDirty = true;
+            return;
           }
         }
       }
 
-      // тап по коту
+      // тап по коту — погладить (не «поиграть игрушкой», для этого нужно
+      // донести игрушку из «Запасов», см. resolveSupplyDrop)
       const cp = I.P(this.cat.x, this.cat.y);
-      if (Math.hypot(x - cp[0], y - cp[1] + 20) < 34) { this.playHand(); return; }
+      if (Math.hypot(x - cp[0], y - cp[1] + 20) < 34) { this.petCat(); return; }
 
       // тап по полу — идём
       const [gx, gy] = I.unP(x, y);
@@ -726,30 +1024,69 @@
 
     onUp(p) {
       if (!this.drag) return;
-      const x = p.worldX, y = p.worldY, F = I.PROJ.F, it = D.ITEMS[this.drag.iid];
+      const drag = this.drag;
+      const x = p.worldX, y = p.worldY, F = I.PROJ.F;
+
+      if (drag.kind === 'supply') {
+        this.resolveSupplyDrop(x, y);
+        this.drag = null; this.uiDirty = true;
+        return;
+      }
+
+      const it = D.ITEMS[drag.iid];
+      const isExisting = drag.kind === 'existing';
+
+      // Существующий предмет, отпущенный над правой панелью (там всё ещё
+      // список инвентаря, т.к. режим не менялся) — вернуть в инвентарь.
+      if (isExisting && inPoly([x, y], this.ui.R.poly)) {
+        delete this.st.place[drag.from];
+        this.rebuild();
+        this.drag = null; this.uiDirty = true;
+        return;
+      }
+
+      // ближайшая по глубине легальная зона под пальцем; своя исходная зона
+      // (для «existing») тоже кандидат — иначе некуда «отпустить на месте»
       let hit = null;
-      // ближайшая по глубине легальная зона под пальцем
-      const cands = this.zones.filter(z => !this.st.place[z.id] && !I.reject(z, it));
+      const cands = this.zones.filter(z => (!this.st.place[z.id] || z.id === drag.from) && !I.reject(z, it));
       for (const z of cands) {
         if (inPoly([x, y], I.zonePoly(z, F))) { hit = z; break; }
       }
-      if (hit) {
-        this.st.place[hit.id] = this.drag.iid;
+      if (hit && hit.id !== drag.from) {
+        if (isExisting) delete this.st.place[drag.from];
+        this.st.place[hit.id] = drag.iid;
         this.rebuild();
         // если постановка отрезала подход — откатываем
         if (this.NAV.unreachable.length) {
           delete this.st.place[hit.id];
+          if (isExisting) this.st.place[drag.from] = drag.iid;
           this.rebuild();
           this.bubble('Так к нему не подойти.');
         }
       }
+      // hit.id === drag.from (отпустили там же, откуда взяли) или !hit
+      // (мимо всего) — тихая отмена, предмет и так ещё на своём месте.
       this.drag = null; this.uiDirty = true;
     }
 
-    setMode(m) { this.mode = m; this.drag = null; this.ui = this.panelGeo(); this.uiDirty = true; }
+    // shellDirty тоже — крепление лампы в drawShell рисуется только пока
+    // mode==='inventory', так что вход/выход из инвентаря обязан перерисовать
+    // оболочку, не только UI.
+    setMode(m) { this.mode = m; this.drag = null; this.ui = this.panelGeo(); this.uiDirty = true; this.shellDirty = true; }
 
-    /* ==================== ПОВЕДЕНИЕ КОТА ==================== */
-    setSt(st, t, after) { this.cat.st = st; this.cat.t = t; this.cat.after = after || null; }
+    /* ==================== ПОВЕДЕНИЕ КОТА ====================
+       Тайминги/вероятности — из behavior активного персонажа
+       (Cats/<Имя>/config.json), не константы в коде: чтобы завести другого
+       кота с другим темпераментом, менять этот файл, а не JS. */
+    // playSegment сбрасывается тут по умолчанию на КАЖДЫЙ переход состояния —
+    // playHand()/feedHand() выставляют его сами СРАЗУ ПОСЛЕ вызова setSt (не
+    // до), иначе обычное кормление из миски/пола (feedBowl/feedFloor тоже
+    // зовут setSt('eat'/'dig',...)) унаследовало бы чужую покадровую
+    // анимацию «с руки» от предыдущего раза.
+    setSt(st, t, after) {
+      this.cat.st = st; this.cat.t = t; this.cat.after = after || null;
+      this.cat.stateElapsedMs = 0; this.cat.playSegment = null;
+    }
     bubble(txt, dur) { this.cat.bubble = txt; this.cat.bt = dur || 3.2; }
 
     walkTo(x, y, after) {
@@ -757,47 +1094,133 @@
       if (!p.length) { this.setSt('idle', 1.2, after); return; }
       this.cat.path = p; this.setSt('walk', 99, after);
     }
-    idleCycle() { this.setSt('idle', rnd(1.2, 3), () => this.decideNext()); }
-    decideNext() {
-      const r = Math.random();
-      if (r < 0.55) this.wander();
-      else if (r < 0.85) this.setSt('sit', rnd(2.5, 6), () => this.afterRest());
-      else this.setSt('lie', rnd(4, 9), () => this.afterRest());
+    idleCycle() {
+      const B = this.activeCatConfig().behavior;
+      this.setSt('idle', rnd(B.idleMinS, B.idleMaxS), () => this.decideNext());
     }
-    afterRest() { if (Math.random() < 0.7) this.wander(); else this.idleCycle(); }
+    decideNext() {
+      const B = this.activeCatConfig().behavior;
+      const r = Math.random();
+      if (r < B.wanderChance) this.wander();
+      else if (r < B.wanderChance + B.sitChance) this.setSt('sit', rnd(B.sitMinS, B.sitMaxS), () => this.afterRest());
+      else this.setSt('lie', rnd(B.lieMinS, B.lieMaxS), () => this.afterRest());
+    }
+    afterRest() {
+      const B = this.activeCatConfig().behavior;
+      if (Math.random() < B.restWanderChance) this.wander(); else this.idleCycle();
+    }
     wander() {
       const s = I.randomSpot(this.NAV, this.cat, 1.2);
       if (!s) { this.setSt('idle', 2, () => this.idleCycle()); return; }
       this.walkTo(s[0], s[1], () => this.idleCycle());
     }
+    // Игрушка — если у персонажа есть покадровая анимация (playToy1/playToy2,
+    // сейчас только у сиамского): первое взаимодействие — playToy1, второе В
+    // ТЕЧЕНИЕ 5 СЕКУНД после первого — playToy2, дальше по кругу третье уже
+    // снова считается «первым» (5с успели истечь). У персонажа без такого
+    // арта (рыжий) — как раньше, статичная поза с подскоком, 1.6с.
     playHand() {
+      const sprites = this.activeCatConfig().sprites;
+      const now = performance.now();
+      const withinWindow = now - this.cat.lastPlayAt < 5000;
+      const seg = withinWindow && sprites.playToy2 ? 'playToy2' : (sprites.playToy1 ? 'playToy1' : null);
+      this.cat.lastPlayAt = now;
+      const anim = seg && sprites[seg];
+      const dur = anim ? (anim.count * anim.frameMs) / 1000 : 1.6;
       this.cat.path = []; this.cat.jump = 3;
-      this.setSt('jump', 1.6, () => {
+      this.setSt('jump', dur, () => {
         this.bubble(pick(D.SAY.toy)); this.mood = clamp(this.mood + 5, 0, 100);
         this.uiDirty = true; this.idleCycle();
       });
+      this.cat.playSegment = seg; // после setSt — она сама сбрасывает playSegment в null
     }
-    useSupply(id) {
-      const s = D.SUPPLIES[id];
-      if (s && s.food) {
-        const zid = Object.keys(this.st.place).find(k => this.st.place[k] === 'bowls');
-        const f = zid ? I.footprint(this.zmap, D.ITEMS, zid, 'bowls') : null;
-        if (!f) { this.bubble(pick(D.SAY.floor)); return; }
-        const sp = I.nearSpot(this.NAV, f.c[0], f.c[1]);
-        this.setMode('view');
-        this.walkTo(sp[0], sp[1], () => {
-          this.bubble(pick(D.SAY.bowl));
-          this.setSt('eat', 2, () => {
-            this.mood = clamp(this.mood + 10, 0, 100); this.uiDirty = true; this.idleCycle();
-          });
+    // Прямой тап по коту (не через донесённую игрушку) — отдельная анимация
+    // (playIdle, кадры 1-38 исходного GIF), не playToy1/playToy2: это разные
+    // ситуации — там «поиграли игрушкой», тут просто погладили/тронули.
+    // lastPlayAt/окно 5с игрушки этот тап не трогает и не сбрасывает.
+    petCat() {
+      const anim = this.activeCatConfig().sprites.playIdle;
+      const dur = anim ? (anim.count * anim.frameMs) / 1000 : 1.6;
+      this.cat.path = []; this.cat.jump = 3;
+      this.setSt('jump', dur, () => {
+        this.bubble(pick(D.SAY.toy)); this.mood = clamp(this.mood + 5, 0, 100);
+        this.uiDirty = true; this.idleCycle();
+      });
+      this.cat.playSegment = anim ? 'playIdle' : null;
+    }
+    // Корм/игрушка из «Запасов» — перенос drag'а из исходного app.js: берём в
+    // руку (onDown уже завёл this.drag={kind:'supply',...}), тащим, и то, КУДА
+    // донесли, решает, что произойдёт (см. resolveSupplyDrop, вызывается из
+    // onUp). Одним тапом больше ничего не срабатывает.
+    // Кормление «с руки» (еду донесли до кота, не до миски/пола) — если у
+    // персонажа есть покадровая анимация (playFed, сейчас только у
+    // сиамского), играем её; иначе как раньше — статичная поза с покачиванием.
+    // feedBowl/feedFloor намеренно этим не пользуются: там кот ест из миски
+    // или закапывает на полу, не «с руки» — своя, отдельная от play-арта
+    // ситуация, даже когда она тоже заканчивается состоянием 'eat'/'dig'.
+    feedHand() {
+      const anim = this.activeCatConfig().sprites.playFed;
+      const dur = anim ? (anim.count * anim.frameMs) / 1000 : 1.8;
+      this.cat.path = [];
+      this.bubble(pick(D.SAY.hand));
+      this.setSt('eat', dur, () => {
+        this.mood = clamp(this.mood + 8, 0, 100); this.uiDirty = true; this.idleCycle();
+      });
+      this.cat.playSegment = anim ? 'playFed' : null;
+    }
+    feedFloor(x, y) {
+      this.bubble(pick(D.SAY.floor));
+      const sp = I.nearSpot(this.NAV, x, y);
+      this.walkTo(sp[0], sp[1], () => {
+        this.setSt('dig', 2.2, () => {
+          this.bubble(pick(D.SAY.buried));
+          this.mood = clamp(this.mood - 6, 0, 100); this.uiDirty = true; this.idleCycle();
         });
-      } else { this.setMode('view'); this.playHand(); }
+      });
+    }
+    feedBowl() {
+      const zid = Object.keys(this.st.place).find(k => this.st.place[k] === 'bowls');
+      const f = zid ? I.footprint(this.zmap, D.ITEMS, zid, 'bowls') : null;
+      if (!f) { this.bubble(pick(D.SAY.floor)); return; }
+      const sp = I.nearSpot(this.NAV, f.c[0], f.c[1]);
+      this.walkTo(sp[0], sp[1], () => {
+        this.bubble(pick(D.SAY.bowl));
+        this.setSt('eat', 2, () => {
+          this.mood = clamp(this.mood + 10, 0, 100); this.uiDirty = true; this.idleCycle();
+        });
+      });
+    }
+    // Куда донесли корм/игрушку — тот же разбор случаев, что в endDrag
+    // исходного app.js: на кота — покормить с руки (корм) или поиграть
+    // (игрушка); на миски — к миске; на любой пол — закопать. Игрушка,
+    // брошенная не рядом с котом, не срабатывает вовсе — по просьбе заказчика
+    // (в отличие от исходника, где она играла с любой зоны).
+    resolveSupplyDrop(x, y) {
+      const sup = D.SUPPLIES[this.drag.iid];
+      const cp = I.P(this.cat.x, this.cat.y);
+      const onCat = this.catOn && Math.hypot(x - cp[0], y - cp[1]) < 46;
+      if (onCat) {
+        this.setMode('view');
+        if (sup.food) this.feedHand(); else this.playHand();
+        return;
+      }
+      if (!sup.food) return;
+      const F = I.PROJ.F;
+      const zp = this.zones.find(z => inPoly([x, y], I.zonePoly(z, F)));
+      if (!zp) return;
+      this.setMode('view');
+      if (this.st.place[zp.id] === 'bowls') { this.feedBowl(); return; }
+      if (['back', 'mid', 'front'].includes(zp.band)) {
+        const [tx, ty] = I.unP(x, y);
+        this.feedFloor(tx, ty);
+      }
     }
 
     tick(dt) {
       const cat = this.cat;
       if (cat.bt > 0) { cat.bt -= dt; if (cat.bt <= 0) cat.bubble = null; }
       if (!this.catOn) return;
+      cat.stateElapsedMs += dt * 1000;
       cat.ph += dt * (cat.st === 'walk' ? 9 : cat.st === 'dig' ? 14 : 2);
 
       if (cat.st === 'walk') {
@@ -808,7 +1231,7 @@
         }
         const [tx, ty] = cat.path[0];
         const dx = tx - cat.x, dy = ty - cat.y, dist = Math.hypot(dx, dy);
-        const sp = 1.15 * dt;
+        const sp = this.catSpeed * dt;
         if (dist <= sp || dist < 1e-6) { cat.x = tx; cat.y = ty; cat.path.shift(); }
         else { cat.x += dx / dist * sp; cat.y += dy / dist * sp; }
         const sdx = dx - dy;                       // направление в экранных координатах
@@ -820,11 +1243,17 @@
     }
 
     update(time, delta) {
+      // create() теперь сразу возвращается и грузит конфиги/картинки кота
+      // асинхронной цепочкой (createStep2.../createStep3Finish) — Phaser же
+      // считает сцену запущенной и зовёт update() каждый кадр всё это время,
+      // до того как this.cat вообще появится. Без охраны здесь падает на
+      // самом первом кадре (this.cat.bt у ещё не созданного this.cat).
+      if (!this.cat) return;
       const dt = Math.min(delta, 60) / 1000;
       this.tick(dt);
       if (this.shellDirty) { this.drawShell(); this.shellDirty = false; }
       this.drawZoneOverlay();
-      this.drawCatGfx();
+      this.updateCatVisual();
       if (this.uiDirty === undefined) this.uiDirty = true;
       if (this.uiDirty || this.drag) { this.drawUI(); this.uiDirty = false; }
     }

@@ -1,0 +1,29 @@
+{
+  "name": "Рыжий кот",
+
+  "speed": 1.15,
+
+  "behavior": {
+    "idleMinS": 1.2,
+    "idleMaxS": 3,
+    "wanderChance": 0.55,
+    "sitChance": 0.30,
+    "sitMinS": 2.5,
+    "sitMaxS": 6,
+    "lieMinS": 4,
+    "lieMaxS": 9,
+    "restWanderChance": 0.7
+  },
+
+  "sprites": {
+    "walk": [
+      "walk_frontleft_0", "walk_frontleft_1", "walk_frontleft_2",
+      "walk_frontleft_3", "walk_frontleft_4", "walk_frontleft_5"
+    ],
+    "idle": "sit_front_a",
+    "sit": "sit_front_b",
+    "lie": "lie_front_a",
+    "eatDig": "sit_front_b",
+    "jump": "walk_frontleft_0"
+  }
+}

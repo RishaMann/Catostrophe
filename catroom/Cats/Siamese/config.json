@@ -1,0 +1,34 @@
+{
+  "name": "Сиамский кот",
+
+  "speed": 1.75,
+
+  "behavior": {
+    "idleMinS": 1,
+    "idleMaxS": 2.4,
+    "wanderChance": 0.6,
+    "sitChance": 0.25,
+    "sitMinS": 2,
+    "sitMaxS": 5,
+    "lieMinS": 3,
+    "lieMaxS": 7,
+    "restWanderChance": 0.75
+  },
+
+  "sprites": {
+    "walk": [
+      "walk_backleft_0", "walk_backleft_1", "walk_backleft_2",
+      "walk_backleft_3", "walk_backleft_4"
+    ],
+    "idle": "sit_front_a",
+    "sit": "sit_front_b",
+    "lie": "lie_front_a",
+    "eatDig": "sit_front_b",
+    "jump": "walk_backleft_0",
+
+    "playToy1": { "frames": "play_toy1", "count": 53, "frameMs": 70 },
+    "playToy2": { "frames": "play_toy2", "count": 37, "frameMs": 70 },
+    "playFed":  { "frames": "play_fed",  "count": 23, "frameMs": 70 },
+    "playIdle": { "frames": "play_idle", "count": 38, "frameMs": 70 }
+  }
+}
