@@ -24,6 +24,8 @@
     "sit": "sit_front_b",
     "lie": "lie_front_a",
     "eatDig": "sit_front_b",
-    "jump": "walk_frontleft_0"
+    "jump": "walk_frontleft_0",
+
+    "previewPoses": ["sit_front_a", "sit_back_a", "sit_front_b", "sit_back_b"]
   }
 }

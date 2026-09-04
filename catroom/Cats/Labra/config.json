@@ -1,0 +1,38 @@
+{
+  "name": "Лабрадор",
+
+  "speed": 1.5,
+
+  "behavior": {
+    "idleMinS": 0.8,
+    "idleMaxS": 1.8,
+    "wanderChance": 0.75,
+    "sitChance": 0.15,
+    "sitMinS": 1.5,
+    "sitMaxS": 3,
+    "lieMinS": 2,
+    "lieMaxS": 5,
+    "restWanderChance": 0.85
+  },
+
+  "sprites": {
+    "walk": {
+      "down":      { "frames": ["walk_front_0", "walk_front_1", "walk_front_2", "walk_front_3", "walk_front_4", "walk_front_5"], "flip": false },
+      "downleft":  { "frames": ["walk_frontleft_0", "walk_frontleft_1", "walk_frontleft_2", "walk_frontleft_3", "walk_frontleft_4", "walk_frontleft_5"], "flip": false },
+      "downright": { "frames": ["walk_frontleft_0", "walk_frontleft_1", "walk_frontleft_2", "walk_frontleft_3", "walk_frontleft_4", "walk_frontleft_5"], "flip": true },
+      "left":      { "frames": ["walk_frontleft_0", "walk_frontleft_1", "walk_frontleft_2", "walk_frontleft_3", "walk_frontleft_4", "walk_frontleft_5"], "flip": false },
+      "right":     { "frames": ["walk_frontleft_0", "walk_frontleft_1", "walk_frontleft_2", "walk_frontleft_3", "walk_frontleft_4", "walk_frontleft_5"], "flip": true },
+      "up":        { "frames": ["walk_away_0", "walk_away_1", "walk_away_2", "walk_away_3", "walk_away_4", "walk_away_5"], "flip": false },
+      "upleft":    { "frames": ["walk_backleft_0", "walk_backleft_1", "walk_backleft_2", "walk_backleft_3", "walk_backleft_4", "walk_backleft_5"], "flip": false },
+      "upright":   { "frames": ["walk_backleft_0", "walk_backleft_1", "walk_backleft_2", "walk_backleft_3", "walk_backleft_4", "walk_backleft_5"], "flip": true }
+    },
+    "idle": "sit_front_a",
+    "sit": "sit_front_b",
+    "lie": "lie_front_a",
+    "eatDig": "sit_front_b",
+    "jump": "walk_frontleft_0",
+
+    "previewPoses": ["sit_front_a", "sit_back_a", "sit_front_b", "sit_back_b"],
+    "previewRotation": [[0, false], [2, true], [1, true], [3, false], [1, false], [2, false]]
+  }
+}

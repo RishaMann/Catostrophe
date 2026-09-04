@@ -62,90 +62,24 @@
     return { Lx, Ld, Wend, F: p.floor };
   }
 
-  /* ---------- статические зоны: пол ---------- */
-  function generateLayout(p) {
-    const F = p.floor, LAY = layoutBounds(p), Lx = LAY.Lx, Ld = LAY.Ld, Wend = LAY.Wend;
-    const Z = [];
-    const push = (id, band, r, ru, ex = {}) => {
-      if (r[2] - r[0] < 0.6 || r[3] - r[1] < 0.6) return;
-      if (r[0] < -0.01 || r[1] < -0.01 || r[2] > F || r[3] > F) return;
-      Z.push({ id, band, r: r.map(v => Math.round(v * 100) / 100), ru, ...ex });
-    };
-
-    push('B1', 'back', [0, 0, 1.4, 1.25], 'Угол между стенами');
-
-    // пол вдоль правой стены
-    const rlen = Wend - 1.4, rn = clamp(Math.floor(rlen / 1.55), 0, 3);
-    const rnm = ['Правая стена, у угла', 'Правая стена, дальше', 'Правая стена, дальний край'];
-    for (let i = 0; i < rn; i++)
-      push('RF_' + 'ABC'[i], 'back',
-        [1.4 + i * (rlen / rn), 0, 1.4 + (i + 1) * (rlen / rn) - 0.05, 1.2], rnm[i]);
-
-    // середина
-    const mx0 = 1.45, my0 = 1.3;
-    const mx1 = Math.min(F - 1.35, my0 + Lx - 0.25, Ld - 1.3 - my0);
-    const my1 = Math.min(F - 1.35, mx0 + Lx - 0.25, Ld - 1.3 - mx0);
-    push('M0', 'mid', [mx0, my0, Math.min(mx0 + 3.1, mx1), Math.min(my0 + 3.0, my1)],
-      'Центр пола (ковёр)', { flat: true });
-    push('M1', 'mid', [mx0, my0, mx0 + 1.1, Math.min(my0 + 2.2, my1)],
-      'Середина, вдоль левой стены');
-    push('M4', 'mid', [Math.max(mx1 - 1.05, mx0 + 1.35), my0, mx1, Math.min(my0 + 2.05, my1)],
-      'Середина, вдоль правой стены');
-    push('M2', 'mid', [mx0 + 1.25, my0 + 0.05, Math.min(mx0 + 2.45, mx1 - 1.15), my0 + 1.35],
-      'Середина, центр');
-    push('M7', 'mid', [mx0 + 1.15, my0 + 1.5, Math.min(mx0 + 3.2, mx1 - 0.05), my0 + 2.6],
-      'Середина, поперёк');
-    push('M5', 'mid', [mx0 - 0.15, my0 + 2.45, mx0 + 0.95, Math.min(my0 + 3.4, my1)],
-      'У левого плинтуса');
-
-    // передний ряд — буквой Г вдоль двух ближних краёв
-    const fw = 1.15, fd = 1.05;
-    const aMin = Math.max(1.55, F - 0.1 - Lx), aMax = Math.min(F - 1.35, Ld - F - fd);
-    const fn = clamp(Math.floor((aMax - aMin) / (fw + 0.12)) + 1, 0, 3);
-    for (let i = 0; i < fn; i++) {
-      const a = aMin + i * (fw + 0.12);
-      push('FL_' + i, 'front', [a, F - fd - 0.1, a + fw, F - 0.1], 'Ближний край, слева ' + (i + 1));
-      push('FR_' + i, 'front', [F - fd - 0.1, a, F - 0.1, a + fw], 'Ближний край, справа ' + (i + 1));
-    }
-    push('FC', 'front', [F - fd - 0.1, F - fd - 0.1, F - 0.1, F - 0.1], 'Ближний угол');
-
-    // Заказчик попросил весь пол доступным для расстановки, не только
-    // курированные зоны выше (id'шники B1/RF_*/M*/FL_*/FR_*/FC — их не
-    // трогаем, чтобы не сломать уже сохранённые раскладки сцен, которые на
-    // них ссылаются). Плотно замащиваем регулярной сеткой ОСТАЛЬНУЮ, ещё не
-    // занятую ни одной зоной выше, площадь пола — но только ту часть, что
-    // реально попадает в кадр (Lx/Ld из layoutBounds), как и раньше: дальше
-    // экрана игрок физически не дотянется, эту границу не меняем. band у
-    // новой ячейки решает та же полоса глубины (близко к задним стенам / к
-    // ближнему краю / середина), что и раньше — категории ACCEPTS ни для
-    // одной зоны не меняются, только их плотность.
-    const CELL = 1.05;
-    const maxX = Math.min(F, Lx), maxY = Math.min(F, Ld);
-    let gi = 0;
-    for (let y0 = 0; y0 < maxY - 0.05; y0 += CELL) {
-      const y1 = Math.min(y0 + CELL, maxY, F);
-      for (let x0 = 0; x0 < maxX - 0.05; x0 += CELL) {
-        const x1 = Math.min(x0 + CELL, maxX, F);
-        const r = [x0, y0, x1, y1];
-        // "занято", если хотя бы половина площади ячейки уже перекрыта
-        // существующей (курированной) зоной — не дублируем, просто пропускаем.
-        const coveredArea = Z.reduce((s, z) => {
-          if (!overlap(z.r, r)) return s;
-          const ow = Math.min(z.r[2], r[2]) - Math.max(z.r[0], r[0]);
-          const oh = Math.min(z.r[3], r[3]) - Math.max(z.r[1], r[1]);
-          return s + Math.max(0, ow) * Math.max(0, oh);
-        }, 0);
-        if (coveredArea > 0.5 * (r[2] - r[0]) * (r[3] - r[1])) continue;
-        const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-        let band, ru;
-        if (Math.min(cx, cy) < 1.3) { band = 'back'; ru = 'У задней стены'; }
-        else if (Math.max(cx, cy) > F - 1.15) { band = 'front'; ru = 'У ближнего края'; }
-        else { band = 'mid'; ru = 'Середина пола'; }
-        push('G' + (gi++), band, r, ru);
-      }
-    }
-    return Z;
-  }
+  /* ---------- статические зоны: пол ----------
+     История: раньше пол размечался конечным списком именованных зон
+     (курированные B1, RF_A..C, M0..M7, FL_i, FR_i, FC, плюс плотная сетка
+     G-ячеек поверх них). Дважды упёрлись в потолок этого подхода — сначала «половина пола
+     недоступна» (граница Lx/Ld не совпадала с реальной видимостью после
+     zoom), потом «шкаф/аквариум никуда не помещаются» (ячейка сетки была
+     меньше мебели) — а диван и ковёр из-за единственной подходящей по
+     размеру зоны вообще нельзя было переставить в другое место. Вместо
+     очередной подгонки размера ячейки — свободная расстановка (см.
+     floorBand/floorOrient/floorRect/rejectFloor ниже): легальность точки
+     считается геометрией (границы комнаты, проход к двери, пересечение с
+     другой мебелью, категория по фактической полосе), а не принадлежностью
+     заранее нарисованной зоне. generateLayout больше не нужен движку —
+     оставлен пустым (а не удалён), чтобы вызов по старому имени не падал,
+     если где-то ещё на него ссылаются (см. предупреждение в шапке файла:
+     это общий с редактором уровней модуль).
+     ========================================================================== */
+  function generateLayout() { return []; }
 
   /* ---------- динамические зоны: стены, окно, поверхность дивана ---------- */
   const ACCEPTS = {
@@ -165,7 +99,7 @@
     return out;
   }
 
-  function dynamicZones(st, LAY, items, statics) {
+  function dynamicZones(st, LAY, items) {
     const z = [], W = LAY.Wend;
     const d0 = st.door.pos, d1 = st.door.pos + DOOR_W;
     const w0 = st.win.pos, w1 = st.win.pos + WIN_W;
@@ -207,14 +141,13 @@
       z.push({ id: 'WIN_FRAME', band: 'wall', wall: 'frontRight', r: [w0 - 0.15, 0.1, w1 + 0.15, 0.34], ru: 'Рама (ближний край)' });
     }
 
-    // поверхность дивана появляется только если диван где-то стоит
-    const sz = Object.keys(st.place).find(k => st.place[k] === 'sofa');
-    const base = Object.fromEntries(statics.map(x => [x.id, x]));
-    if (sz && base[sz]) {
-      const z0 = base[sz], it = items.sofa;
-      const cx = (z0.r[0] + z0.r[2]) / 2, cy = (z0.r[1] + z0.r[3]) / 2;
-      const zw = z0.r[2] - z0.r[0], zd = z0.r[3] - z0.r[1];
-      const [w, d] = zw >= zd ? [it.s[0], it.s[1]] : [it.s[1], it.s[0]];
+    // поверхность дивана появляется только если диван где-то стоит —
+    // позиция теперь из свободной расстановки (st.floor.sofa), не из
+    // курированной зоны (её больше нет).
+    const sofaPos = st.floor && st.floor.sofa;
+    if (sofaPos && items.sofa) {
+      const it = items.sofa, cx = sofaPos.x, cy = sofaPos.y;
+      const [w, d] = floorOrient(it, cx, cy);
       z.push({
         id: 'ON_SOFA', band: 'surface', zh: it.s[2], ru: 'На диване',
         r: [cx - w / 2 + 0.12, cy - d / 2 + 0.1, cx + w / 2 - 0.12, cy + d / 2 - 0.1]
@@ -223,36 +156,111 @@
     return z;
   }
 
+  /* ---------- свободная расстановка мебели по полу ----------
+     Каждый floor-предмет (cat: tall/mid/low) хранит СВОЮ мировую позицию —
+     центр footprint'а — в st.floor[iid] = {x, y}. Никакого списка зон:
+     легальность точки — геометрия (границы комнаты, проход к двери,
+     пересечение с другой уже стоящей мебелью, категория по фактической
+     полосе расстояния до стен/переднего края), а не принадлежность заранее
+     нарисованной зоне. Стены/потолок/поверхности (curtain, bulb, plaid и
+     т.п.) свободной расстановки не касаются — там по-прежнему конечный
+     список зон из dynamicZones() выше, они привязаны к конкретным
+     конструктивным местам (стена, крепление лампы, сиденье дивана), а не к
+     свободной площади пола. */
+
+  // Полосы те же пороги, что раньше были у плотной сетки/курированных зон —
+  // просто теперь считаются от фактической позиции предмета, а не от id
+  // заранее нарисованной ячейки.
+  function floorBand(cx, cy, F) {
+    if (Math.min(cx, cy) < 1.3) return 'back';
+    if (Math.max(cx, cy) > F - 1.15) return 'front';
+    return 'mid';
+  }
+
+  // Та же эвристика, что раньше жила только в «призраке» в руке (drawGhost,
+  // ui/hud.js): широкой стороной к БЛИЖАЙШЕЙ задней стене — расстояние до
+  // левой стены (x=0) это cx, до правой (y=0) это cy.
+  function floorOrient(it, cx, cy) {
+    return cx <= cy ? [it.s[1], it.s[0]] : [it.s[0], it.s[1]];
+  }
+
+  function floorRect(it, cx, cy) {
+    const [w, d] = floorOrient(it, cx, cy);
+    return [cx - w / 2, cy - d / 2, cx + w / 2, cy + d / 2];
+  }
+
+  // Контур floor-прямоугольника в экранных координатах — тот же порядок
+  // углов, что у zonePoly() для обычного (не wall/surface) случая.
+  function floorPoly(r) {
+    const [a, b, c, d] = r;
+    return [P(a, b), P(c, b), P(c, d), P(a, d)];
+  }
+
+  function doorClearRect(st, F) {
+    const d0 = st.door.pos, d1 = d0 + DOOR_W;
+    return st.door.side === 'left'
+      ? [0, d0 - 0.15, 1.1, d1 + 0.15]
+      : [d0 - 0.15, F - 1.15, d1 + 0.15, F];
+  }
+
+  // excludeIid — свой же iid при перестановке уже стоящего предмета: иначе
+  // предмет всегда конфликтовал бы сам с собой на прежнем месте.
+  function rejectFloor(cx, cy, it, st, items, F, excludeIid) {
+    const r = floorRect(it, cx, cy);
+    if (r[0] < -0.01 || r[1] < -0.01 || r[2] > F + 0.01 || r[3] > F + 0.01) return 'не помещается в комнату';
+    if (overlap(r, doorClearRect(st, F))) return 'проход к двери должен оставаться свободным';
+
+    const band = floorBand(cx, cy, F);
+    const okCat = ACCEPTS[band].includes(it.cat) || (band === 'front' && it.frontOk);
+    if (!okCat) return {
+      back: 'сюда встаёт мебель у стен', mid: 'здесь только среднее и низкое', front: 'ближний край держим низким'
+    }[band];
+
+    // то же правило, что раньше было флагом maxH у курированных зон вдоль
+    // правой (задней) стены под окном: не заслонять окно высокой мебелью.
+    if (st.win.side === 'right' && r[1] < 1.25 && r[0] >= 1.0 && it.s[2] > 1.3) {
+      const w0 = st.win.pos, w1 = w0 + WIN_W;
+      const ov = Math.min(r[2], w1) - Math.max(r[0], w0);
+      if (ov > 0 && ov / (r[2] - r[0]) > 0.5) return 'загородит окно';
+    }
+
+    // Пересечение с другой мебелью — «плоские» предметы (ковёр и т.п.,
+    // высота < 0.2, тот же порог, что у навигационных «solid»-препятствий)
+    // в проверку не идут ни как помеха, ни как то, чему мешают: ковёр лежит
+    // ПОД мебелью, а не конкурирует с ней за место.
+    if (it.s[2] >= 0.2) {
+      for (const [iid, pos] of Object.entries(st.floor || {})) {
+        if (iid === excludeIid) continue;
+        const other = items[iid];
+        if (!other || !other.s || other.s[2] < 0.2) continue;
+        if (overlap(r, floorRect(other, pos.x, pos.y))) return 'здесь уже стоит: ' + other.ru;
+      }
+    }
+    return null;
+  }
+
+  function floorDepth(pos) { return pos.x + pos.y; }
+
+  function floorFootprint(items, floorState, iid) {
+    const it = items[iid], pos = floorState[iid];
+    if (!it || !it.s || !pos) return null;
+    return { r: floorRect(it, pos.x, pos.y), h: it.s[2], it, c: [pos.x, pos.y] };
+  }
+
   /* ---------- сборка сцены целиком ---------- */
-  // Вход: параметры сцены + состояние (дверь, окно, раскладка) + каталог предметов.
-  // Выход: PROJ, границы, список зон и карта зон. Больше движку ничего не нужно.
+  // Вход: параметры сцены + состояние (дверь, окно, раскладка, свободная
+  // расстановка) + каталог предметов. Выход: PROJ, границы, список зон
+  // (стены/потолок/поверхности — floor-мебель в них больше не участвует,
+  // см. rejectFloor/floorFootprint) и карта зон.
   function buildScene(params, st, items) {
     applyProj(params);
     const LAY = layoutBounds(params);
-    const statics = generateLayout(params);
     const F = params.F || params.floor;
-    const d0 = st.door.pos, d1 = st.door.pos + DOOR_W;
-    const w0 = st.win.pos, w1 = st.win.pos + WIN_W;
 
-    // проход к двери держим свободным
-    const clear = st.door.side === 'left'
-      ? [0, d0 - 0.15, 1.1, d1 + 0.15]
-      : [d0 - 0.15, F - 1.15, d1 + 0.15, F];
-
-    const zones = [...statics, ...dynamicZones(st, LAY, items, statics)].map(z => {
-      const o = { ...z };
-      if (z.band === 'back' || z.band === 'mid' || z.band === 'front') {
-        if (overlap(z.r, clear)) o.blocked = 'проход к двери должен оставаться свободным';
-        if (st.win.side === 'right' && z.band === 'back' && z.r[1] < 1.25 && z.r[0] >= 1.0) {
-          const ov = Math.min(z.r[2], w1) - Math.max(z.r[0], w0);
-          if (ov > 0 && ov / (z.r[2] - z.r[0]) > 0.5) o.maxH = 1.3;
-        }
-      }
-      return o;
-    });
-
+    const zones = dynamicZones(st, LAY, items);
     const zmap = Object.fromEntries(zones.map(z => [z.id, z]));
     Object.keys(st.place).forEach(k => { if (k !== 'CEIL' && !zmap[k]) delete st.place[k]; });
+    if (!st.floor) st.floor = {};
     return { PROJ, LAY, zones, zmap };
   }
 
@@ -303,13 +311,14 @@
 
   /* ---------- проходимость ----------
      Навигационная область кота — весь пол минус препятствия от фактически
-     поставленной мебели. Она НЕ зависит от того, сколько зон размещения есть и
-     где они: пустая зона на проходимость не влияет никак.                    */
-  function navObstacles(zmap, items, place) {
+     поставленной floor-мебели (свободная расстановка, st.floor). Она НЕ
+     зависит от того, сколько где легальных мест для постановки — пустое
+     место на проходимость не влияет никак. Стены/потолок/поверхности пола
+     не касаются и тут не участвуют.                                       */
+  function navObstaclesFloor(items, floorState) {
     const solid = [], touch = [];
-    Object.entries(place).forEach(([zid, iid]) => {
-      if (zid === 'CEIL' || !zmap[zid]) return;
-      const f = footprint(zmap, items, zid, iid);
+    Object.keys(floorState || {}).forEach(iid => {
+      const f = floorFootprint(items, floorState, iid);
       if (!f) return;
       if (f.h >= 0.2) solid.push(f.r);
       if (f.it.touch) touch.push(f);
@@ -317,10 +326,10 @@
     return { solid, touch };
   }
 
-  function buildNav(zmap, items, place, catPos) {
+  function buildNav(items, floorState, catPos) {
     const F = PROJ.F, GN = Math.round(F / STEP) + 1;
     const b = { x0: CAT_R, y0: CAT_R, x1: F - CAT_R, y1: F - CAT_R };
-    const { solid, touch } = navObstacles(zmap, items, place);
+    const { solid, touch } = navObstaclesFloor(items, floorState);
     const free = (x, y) => {
       if (x < b.x0 || y < b.y0 || x > b.x1 || y > b.y1) return false;
       return !solid.some(r => x > r[0] - CAT_R && x < r[2] + CAT_R && y > r[1] - CAT_R && y < r[3] + CAT_R);
@@ -421,6 +430,8 @@
     PROJ, kScale, applyProj, P, unP, clamp, overlap, centroid,
     layoutBounds, generateLayout, dynamicZones, buildScene,
     ACCEPTS, fit, footprint, reject, depth, zonePoly,
+    // свободная расстановка floor-мебели (см. блок выше dynamicZones)
+    floorBand, floorOrient, floorRect, floorPoly, floorDepth, floorFootprint, rejectFloor,
     buildNav, findPath, randomSpot, nearSpot
   };
 })(typeof window !== 'undefined' ? window : globalThis);

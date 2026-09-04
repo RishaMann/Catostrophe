@@ -14,10 +14,20 @@
 <div id="app"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
-<!-- порядок важен: iso.js ничего не импортирует и должен грузиться первым -->
+<!-- порядок важен: каждый файл читает window.* от предыдущих при своей
+     загрузке (нет сборщика/import) -->
 <script src="src/iso.js"></script>
 <script src="src/data.js"></script>
 <script src="src/icons.js"></script>
+<script src="src/render/constants.js"></script>
+<script src="src/util.js"></script>
+<script src="src/room/shell.js"></script>
+<script src="src/room/itemShapes.js"></script>
+<script src="src/room/itemsRender.js"></script>
+<script src="src/cat/catAppearance.js"></script>
+<script src="src/cat/catBehavior.js"></script>
+<script src="src/ui/hud.js"></script>
+<script src="src/input.js"></script>
 <script src="src/game.js"></script>
 </body>
 </html>

@@ -26,6 +26,8 @@
     "eatDig": "sit_front_b",
     "jump": "walk_backleft_0",
 
+    "previewPoses": ["sit_front_a", "sit_back_a", "sit_front_b", "sit_back_b"],
+
     "playToy1": { "frames": "play_toy1", "count": 53, "frameMs": 70 },
     "playToy2": { "frames": "play_toy2", "count": 37, "frameMs": 70 },
     "playFed":  { "frames": "play_fed",  "count": 23, "frameMs": 70 },

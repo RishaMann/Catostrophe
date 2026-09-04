@@ -5,10 +5,22 @@
   "light": { "x": 2.7, "y": 2.7 },
   "cat": { "x": 3, "y": 5.5 },
   "place": {
-    "B1": "lamp", "LF_A": "wardrobe", "RF_A": "bookshelf",
-    "M0": "rug", "M1": "sofa", "M2": "table", "M4": "aquarium", "M7": "pouf", "M5": "vacuum",
-    "G16": "box", "G17": "ficus", "G18": "bowls", "G4": "bed",
     "ON_SOFA": "plaid", "WIN_ROD": "curtain", "WIN_FRAME": "garland", "WL_A": "wshelf",
     "CEIL": "bulb"
+  },
+  "floor": {
+    "lamp": { "x": 0.7, "y": 0.63 },
+    "wardrobe": { "x": 0.63, "y": 2.2 },
+    "bookshelf": { "x": 2.72, "y": 0.6 },
+    "rug": { "x": 3, "y": 2.8 },
+    "sofa": { "x": 2, "y": 2.4 },
+    "table": { "x": 3.3, "y": 2 },
+    "aquarium": { "x": 4.68, "y": 2.33 },
+    "pouf": { "x": 3.63, "y": 3.35 },
+    "vacuum": { "x": 1.85, "y": 4.22 },
+    "box": { "x": 5.6, "y": 7.2 },
+    "ficus": { "x": 7.2, "y": 7.2 },
+    "bed": { "x": 7.2, "y": 2.4 },
+    "bowls": { "x": 4.9, "y": 7.3 }
   }
 }
