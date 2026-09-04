@@ -10,7 +10,7 @@
     {
       "name": "phaser",
       "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
-      "runtimeArgs": ["phaser-game/node_modules/vite/bin/vite.js", "phaser-game", "--port", "5173", "--strictPort"],
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "5173", "--strictPort"],
       "port": 5173
     }
   ]
