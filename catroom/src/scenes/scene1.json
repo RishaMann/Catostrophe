@@ -1,0 +1,14 @@
+{
+  "params": { "floor": 8, "tilt": 0.5, "zoom": 1.0 },
+  "door": { "side": "left", "pos": 3.3 },
+  "win": { "side": "right", "pos": 2.6 },
+  "light": { "x": 2.7, "y": 2.7 },
+  "cat": { "x": 3, "y": 5.5 },
+  "place": {
+    "B1": "lamp", "LF_A": "wardrobe", "RF_A": "bookshelf",
+    "M0": "rug", "M1": "sofa", "M2": "table", "M4": "aquarium", "M7": "pouf", "M5": "vacuum",
+    "FL_0": "box", "FL_1": "ficus", "FR_0": "bowls", "FR_1": "bed",
+    "ON_SOFA": "plaid", "WIN_ROD": "curtain", "WIN_FRAME": "garland", "WL_A": "wshelf",
+    "CEIL": "bulb"
+  }
+}

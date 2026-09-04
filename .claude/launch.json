@@ -12,6 +12,12 @@
       "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
       "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "5173", "--strictPort"],
       "port": 5173
+    },
+    {
+      "name": "catroom",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-l", "8080", "catroom"],
+      "port": 8080
     }
   ]
 }
