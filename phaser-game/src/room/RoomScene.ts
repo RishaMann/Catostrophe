@@ -4,7 +4,7 @@ import { HexCell, nearestCell } from "../iso/hexLattice";
 import { FurnitureInstance, S, furnitureDepthPoint } from "../iso/squareGrid";
 import { depthOf } from "../iso/depth";
 import { CatAgent, CAT_SPEED } from "../cat/CatAgent";
-import { CAT_FRAME_NAMES, CAT_SKINS, CatSkin, DIR_SPRITES, SIAMESE_PLAY_FRAMES, textureKey } from "../cat/catSprites";
+import { CAT_FRAME_NAMES, CAT_SKINS, CatSkin, dirSpritesFor, SIAMESE_PLAY_FRAMES, textureKey } from "../cat/catSprites";
 import { buildFloorPatch, NavPatch } from "../nav/navPatch";
 import { buildSlots, nearestSlot, Slot } from "./placementMode";
 import { DEFAULT_ROOM, RoomSpec } from "./RoomSpec";
@@ -127,7 +127,7 @@ export class RoomScene extends Phaser.Scene {
     this.g = this.add.graphics().setDepth(-1e6);
     this.dynG = this.add.graphics().setDepth(1e6);
     this.placementG = this.add.graphics().setDepth(1e6 + 1);
-    this.catImg = this.add.image(0, 0, textureKey(this.catSkin, DIR_SPRITES[0].idle)).setScale(CAT_ART_SCALE).setOrigin(0.5, 1);
+    this.catImg = this.add.image(0, 0, textureKey(this.catSkin, dirSpritesFor(this.catSkin)[0].idle)).setScale(CAT_ART_SCALE).setOrigin(0.5, 1);
     this.bubbleText = this.add
       .text(0, 0, "", {
         fontSize: "8px",
@@ -243,7 +243,7 @@ export class RoomScene extends Phaser.Scene {
   private updateCatSprite() {
     const img = this.catImg;
     const cat = this.cat;
-    const dirSprite = DIR_SPRITES[cat.dir];
+    const dirSprite = dirSpritesFor(this.catSkin)[cat.dir];
     let frameName: string;
     let bobY = 0;
     switch (cat.state) {
