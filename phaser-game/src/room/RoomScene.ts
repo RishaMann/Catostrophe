@@ -4,7 +4,18 @@ import { HexCell, nearestCell } from "../iso/hexLattice";
 import { FurnitureInstance, S, furnitureDepthPoint } from "../iso/squareGrid";
 import { depthOf } from "../iso/depth";
 import { CatAgent, CAT_SPEED } from "../cat/CatAgent";
-import { CAT_FRAME_NAMES, CAT_SKINS, CatSkin, dirSpritesFor, SIAMESE_PLAY_FRAMES, textureKey } from "../cat/catSprites";
+import {
+  CAT_FRAME_NAMES,
+  CAT_SKINS,
+  CatSkin,
+  dirSpritesFor,
+  SIAMESE_PLAY_FED_FRAMES,
+  SIAMESE_PLAY_FRAME_MS,
+  SIAMESE_PLAY_IDLE_FRAMES,
+  SIAMESE_PLAY_TOY1_FRAMES,
+  SIAMESE_PLAY_TOY2_FRAMES,
+  textureKey,
+} from "../cat/catSprites";
 import { buildFloorPatch, NavPatch } from "../nav/navPatch";
 import { buildSlots, nearestSlot, Slot } from "./placementMode";
 import { DEFAULT_ROOM, RoomSpec } from "./RoomSpec";
@@ -26,7 +37,6 @@ const LINE = 0xebe2d5;
 // тянется вверх от неё). Меньше — меньше ложных «сквозь стену»/«сквозь мебель».
 const CAT_ART_SCALE = 0.075; // исходники ~250-330px, коту на сцене место ~19-25px
 const WALK_FRAME_DIST = 10; // экранных px пройденного пути на один кадр анимации ходьбы
-const PLAY_FRAME_DIST_MS = 90; // мс реального времени на один кадр siamese_play.gif
 
 // Дверь/окно — перенос door/window из старого app.js: дверь на левой задней
 // стене (плоскость wx=0), окно на правой (wy=0), таскаются drag'ом прямо по
@@ -114,7 +124,12 @@ export class RoomScene extends Phaser.Scene {
         this.load.image(textureKey(skin, name), `/art/cats/${skin}/${name}.png`);
       }
     }
-    for (const name of SIAMESE_PLAY_FRAMES) {
+    for (const name of [
+      ...SIAMESE_PLAY_IDLE_FRAMES,
+      ...SIAMESE_PLAY_TOY1_FRAMES,
+      ...SIAMESE_PLAY_TOY2_FRAMES,
+      ...SIAMESE_PLAY_FED_FRAMES,
+    ]) {
       this.load.image(textureKey("siamese", name), `/art/cats/siamese/${name}.png`);
     }
   }
@@ -235,11 +250,13 @@ export class RoomScene extends Phaser.Scene {
   // сортировать/перерисовывать на каждый кадр не нужно. У мебели depth
   // выставляется один раз при перестановке (rebuildFurnitureGfx), у кота —
   // каждый кадр здесь, потому что его клетка (и с ней depth) меняется на ходу.
-  // Кадры sit/lie/eat/dig/jump — своих ракурсов в исходном арте нет (только
-  // idle-сидение, лёж и ходьба, см. README «Арт кота»), поэтому eat/dig
-  // визуально используют тот же кадр, что sit (лёгкое покачивание вместо
-  // отдельной анимации), а jump — первый кадр ходьбы с вертикальным подскоком
-  // (та же идея, что jumpY в старом app.js).
+  // Кадры sit/lie/eat/dig/jump/fidget — своих ракурсов в исходном арте нет
+  // (только idle-сидение, лёж и ходьба, см. README «Арт кота»), поэтому
+  // eat/dig/fidget визуально используют тот же кадр, что sit (лёгкое
+  // покачивание вместо отдельной анимации), а jump — первый кадр ходьбы с
+  // вертикальным подскоком (та же идея, что jumpY в старом app.js). Это
+  // generic-заглушка для redfat (и для siamese без подходящей play-анимации);
+  // ниже она перекрывается честными кадрами siamese_play_full.gif, где есть.
   private updateCatSprite() {
     const img = this.catImg;
     const cat = this.cat;
@@ -258,6 +275,7 @@ export class RoomScene extends Phaser.Scene {
         break;
       case "eat":
       case "dig":
+      case "fidget":
         frameName = dirSprite.sitAlt;
         bobY = Math.sin(performance.now() / 90) * 1.5;
         break;
@@ -269,12 +287,25 @@ export class RoomScene extends Phaser.Scene {
         frameName = dirSprite.idle;
     }
 
-    // Игра с игрушкой у сиамского кота — отдельная раскладка кадров
-    // (siamese_play.gif, без ракурсов/флипа, см. catSprites.ts) вместо
-    // общего bounce-приёма выше.
-    if (cat.state === "jump" && this.catSkin === "siamese") {
-      const idx = Math.floor(performance.now() / PLAY_FRAME_DIST_MS) % SIAMESE_PLAY_FRAMES.length;
-      img.setTexture(textureKey("siamese", SIAMESE_PLAY_FRAMES[idx]));
+    // Сиамские play-once анимации (siamese_play_full.gif, разложен на 4
+    // сегмента — idle/toy1/toy2/fed, см. catSprites.ts) — без ракурсов и
+    // флипа, кадр гонится по времени с начала состояния (CatAgent.stateElapsedMs),
+    // а не зациклен, поэтому играет один раз и останавливается на последнем
+    // кадре, если состояние почему-то длится дольше самой анимации.
+    let siameseFrames: string[] | null = null;
+    if (this.catSkin === "siamese") {
+      if (cat.state === "fidget") siameseFrames = SIAMESE_PLAY_IDLE_FRAMES;
+      else if (cat.state === "jump") siameseFrames = cat.playVariant === "toy2" ? SIAMESE_PLAY_TOY2_FRAMES : SIAMESE_PLAY_TOY1_FRAMES;
+      else if (cat.state === "eat" && cat.eatVariant === "hand") siameseFrames = SIAMESE_PLAY_FED_FRAMES;
+    }
+    if (siameseFrames) {
+      // Реальная нарисованная анимация (не generic-заглушка) — подскок,
+      // рассчитанный на sitAlt/первый кадр ходьбы, ей не нужен: движение уже
+      // есть в самих кадрах, а сверху ещё и bobY выглядело как «весь кот
+      // подпрыгивает» поверх собственной анимации.
+      bobY = 0;
+      const idx = Math.min(siameseFrames.length - 1, Math.floor(cat.stateElapsedMs / SIAMESE_PLAY_FRAME_MS));
+      img.setTexture(textureKey("siamese", siameseFrames[idx]));
       img.setFlipX(false);
     } else {
       img.setTexture(textureKey(this.catSkin, frameName));

@@ -20,9 +20,29 @@
 
 import { HexCell } from "../iso/hexLattice";
 import { findPath } from "../nav/astar";
+import {
+  SIAMESE_PLAY_FED_FRAMES,
+  SIAMESE_PLAY_FRAME_MS,
+  SIAMESE_PLAY_IDLE_FRAMES,
+  SIAMESE_PLAY_TOY1_FRAMES,
+  SIAMESE_PLAY_TOY2_FRAMES,
+} from "./catSprites";
 
 // Скорость — экранные px/с, до масштабирования (§7.3, §15).
 export const CAT_SPEED = { redfat: 34, siamese: 52 } as const;
+
+// Длительности состояний "fidget"/"jump"(toy1/toy2)/"eat"(с руки) равны
+// длине соответствующих анимаций siamese_play_full.gif (см. catSprites.ts) —
+// у redfat таких кадров нет, но темп поведения (когда меняется настроение,
+// когда отпускает bubble) один и тот же для обоих скинов, различается
+// только картинка (RoomScene.updateCatSprite рисует redfat generic-заглушкой).
+const FIDGET_S = (SIAMESE_PLAY_IDLE_FRAMES.length * SIAMESE_PLAY_FRAME_MS) / 1000;
+const TOY1_S = (SIAMESE_PLAY_TOY1_FRAMES.length * SIAMESE_PLAY_FRAME_MS) / 1000;
+const TOY2_S = (SIAMESE_PLAY_TOY2_FRAMES.length * SIAMESE_PLAY_FRAME_MS) / 1000;
+const FED_S = (SIAMESE_PLAY_FED_FRAMES.length * SIAMESE_PLAY_FRAME_MS) / 1000;
+const REPEAT_PLAY_WINDOW_MS = 5000; // «второе взаимодействие в течение 5с после первого»
+const LONG_SIT_THRESHOLD_S = 4.5; // порог «долго сидел» — заметно выше середины rnd(2.5,6)
+const FIDGET_CHANCE = 0.4; // вероятность случайного события после долгого sit
 
 // Шесть спрайтовых направлений в экранных углах: 4 из §7.4 плюс «строго от
 // зрителя» (-90°) и «строго на зрителя» (90°) — ровно то, что дают
@@ -40,7 +60,7 @@ export const SPRITE_DIR_NAMES = [
 const DIR_COOLDOWN_MS = 150;
 const EAR_TWITCH_MS = 400;
 
-export type CatState = "idle" | "walk" | "sit" | "lie" | "eat" | "dig" | "jump";
+export type CatState = "idle" | "walk" | "sit" | "lie" | "eat" | "dig" | "jump" | "fidget";
 
 // Реплики кота — дословный перенос SAY из старого app.js.
 export const SAY = {
@@ -69,12 +89,17 @@ export class CatAgent {
   mood = 62; // 0..100, как в старом прототипе
   bubble: string | null = null;
   bubbleMs = 0;
+  playVariant: "toy1" | "toy2" = "toy1"; // для state==="jump" — RoomScene выбирает по этому набор кадров
+  eatVariant: "hand" | "bowl" = "bowl"; // для state==="eat" — «с руки» (feedHand) даёт отдельную анимацию у siamese
+  stateElapsedMs = 0; // время с начала текущего состояния — RoomScene гонит по нему кадр «play-once» анимаций (fidget/jump/eat-с-руки)
 
   private stateTimer = 0;
   private afterState: (() => void) | null = null;
   private lattice: HexCell[] = []; // свежая решётка патча — обновляется каждый update(), нужна для wander()
   private legTarget: HexCell | null = null;
   private lastDirChangeAt = -Infinity;
+  private lastSitDuration = 0; // для «долго сидел» → случайный fidget в afterRest()
+  private lastPlayAt = -Infinity; // performance.now() последнего playHand() — для toy1/toy2
 
   constructor(start: HexCell, speed: number = CAT_SPEED.redfat) {
     this.cell = start;
@@ -107,7 +132,8 @@ export class CatAgent {
     this.path = [];
     this.bubble = pick(SAY.hand);
     this.bubbleMs = 3200;
-    this.setState("eat", 1.8, () => {
+    this.eatVariant = "hand";
+    this.setState("eat", FED_S, () => {
       this.mood = clamp(this.mood + 8, 0, 100);
       this.idleCycle();
     });
@@ -116,7 +142,11 @@ export class CatAgent {
   playHand() {
     this.path = [];
     this.bubble = null;
-    this.setState("jump", 1.6, () => {
+    const now = performance.now();
+    this.playVariant = now - this.lastPlayAt < REPEAT_PLAY_WINDOW_MS ? "toy2" : "toy1";
+    this.lastPlayAt = now;
+    const duration = this.playVariant === "toy2" ? TOY2_S : TOY1_S;
+    this.setState("jump", duration, () => {
       this.bubble = pick(SAY.toy);
       this.bubbleMs = 3200;
       this.mood = clamp(this.mood + 5, 0, 100);
@@ -137,6 +167,7 @@ export class CatAgent {
       this.walkTo(bowlCell, () => {
         this.bubble = pick(SAY.bowl);
         this.bubbleMs = 3200;
+        this.eatVariant = "bowl";
         this.setState("eat", 2, () => {
           this.mood = clamp(this.mood + 10, 0, 100);
           this.idleCycle();
@@ -172,6 +203,7 @@ export class CatAgent {
     }
 
     this.stateTimer -= dtSec;
+    this.stateElapsedMs += dtSec * 1000;
     if (this.stateTimer <= 0) this.resolveAfterState();
   }
 
@@ -218,6 +250,7 @@ export class CatAgent {
   private setState(state: CatState, duration: number, after: (() => void) | null) {
     this.state = state;
     this.stateTimer = duration;
+    this.stateElapsedMs = 0;
     this.afterState = after;
   }
 
@@ -247,11 +280,24 @@ export class CatAgent {
   private decideNext() {
     const r = Math.random();
     if (r < 0.55) this.wander();
-    else if (r < 0.85) this.setState("sit", rnd(2.5, 6), () => this.afterRest());
-    else this.setState("lie", rnd(4, 9), () => this.afterRest());
+    else if (r < 0.85) {
+      const dur = rnd(2.5, 6);
+      this.lastSitDuration = dur;
+      this.setState("sit", dur, () => this.afterRest());
+    } else {
+      this.lastSitDuration = 0; // fidget — только после sit, не после lie
+      this.setState("lie", rnd(4, 9), () => this.afterRest());
+    }
   }
 
   private afterRest() {
+    // «Кот долго сидит» — редкое самостоятельное событие (fidget), только
+    // если предыдущий sit был заметно длиннее среднего.
+    if (this.lastSitDuration > LONG_SIT_THRESHOLD_S && Math.random() < FIDGET_CHANCE) {
+      this.lastSitDuration = 0;
+      this.setState("fidget", FIDGET_S, () => (Math.random() < 0.7 ? this.wander() : this.idleCycle()));
+      return;
+    }
     if (Math.random() < 0.7) this.wander();
     else this.idleCycle();
   }

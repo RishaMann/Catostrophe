@@ -104,8 +104,19 @@ export const CAT_FRAME_NAMES: string[] = [
   ...WALK_FRONT_ALT,
 ];
 
-// Не имеет направления (в исходном GIF кот всегда анимирован анфас) —
-// используется как есть, без флипа/ракурсов, только для skin === "siamese".
-export const SIAMESE_PLAY_FRAMES: string[] = ["play_0", "play_1", "play_2", "play_3", "play_4", "play_5"];
+// Documentation/Cats/Siamese/siamese_play_full.gif (151 кадр, 70мс/кадр) —
+// разложен на 4 именованных сегмента под конкретные триггеры (границы
+// заданы заказчиком по номеру кадра в GIF, см. scripts/extract_play_frames.py):
+//   play_idle — редкое случайное событие после долгого "sit" (CatAgent.decideNext/afterRest)
+//   play_toy1 — первое взаимодействие с игрушкой (playHand)
+//   play_toy2 — второе взаимодействие в течение 5 секунд после первого
+//   play_fed  — покормили «с руки», перетащив еду на кота (feedHand)
+// Без направления/флипа (в GIF кот всегда анфас) — только для skin === "siamese".
+const range = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}_${i}`);
+export const SIAMESE_PLAY_IDLE_FRAMES: string[] = range("play_idle", 38);
+export const SIAMESE_PLAY_TOY1_FRAMES: string[] = range("play_toy1", 53);
+export const SIAMESE_PLAY_TOY2_FRAMES: string[] = range("play_toy2", 37);
+export const SIAMESE_PLAY_FED_FRAMES: string[] = range("play_fed", 23);
+export const SIAMESE_PLAY_FRAME_MS = 70; // тайминг взят из самого GIF (info.duration)
 
 export const textureKey = (skin: CatSkin, name: string) => `cat_${skin}_${name}`;
