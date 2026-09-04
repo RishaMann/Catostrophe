@@ -121,7 +121,7 @@ export class RoomScene extends Phaser.Scene {
     // загрузки текстур.
     for (const skin of CAT_SKINS) {
       for (const name of CAT_FRAME_NAMES) {
-        this.load.image(textureKey(skin, name), `/art/cats/${skin}/${name}.png`);
+        this.load.image(textureKey(skin, name), `${import.meta.env.BASE_URL}art/cats/${skin}/${name}.png`);
       }
     }
     for (const name of [
@@ -130,7 +130,7 @@ export class RoomScene extends Phaser.Scene {
       ...SIAMESE_PLAY_TOY2_FRAMES,
       ...SIAMESE_PLAY_FED_FRAMES,
     ]) {
-      this.load.image(textureKey("siamese", name), `/art/cats/siamese/${name}.png`);
+      this.load.image(textureKey("siamese", name), `${import.meta.env.BASE_URL}art/cats/siamese/${name}.png`);
     }
   }
 
