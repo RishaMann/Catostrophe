@@ -37,11 +37,16 @@ jobs:
         working-directory: phaser-game
         run: npm run build
 
+      - name: Nest build output under /phaser-game/
+        run: |
+          mkdir -p site/phaser-game
+          cp -r phaser-game/dist/. site/phaser-game/
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: phaser-game/dist
+          path: site
 
   deploy:
     needs: build
