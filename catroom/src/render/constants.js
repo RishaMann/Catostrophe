@@ -23,6 +23,11 @@
   const SHELL_DEPTH = -1;   // пол, стены, проёмы, проходимость (debug)
   const ZONE_DEPTH = -0.5;  // подсветка пустых зон при драге — под предметами,
                              // но взаимоисключающе с ними (заняты либо зона, либо предмет)
+  const SHADOW_DEPTH = -0.3; // тени от ламп/торшера/люстры — под предметами (лежат
+                              // НА полу), но над полом/стенами (см. room/lighting.js)
+  const GLOW_DEPTH = 9500;   // тёплое свечение источников света — поверх пола, стен,
+                              // предметов И кота (аддитивный blend, см. lighting.js),
+                              // но под панелями UI
   const TEXT_DEPTH = 1000;  // все надписи комнаты — всегда поверх боксов предметов
   const CEIL_DEPTH = 900;   // потолочный подвес — выше обычных предметов
   const UI_DEPTH = 10000;   // нижние панели/HUD — всегда поверх сцены
@@ -40,7 +45,7 @@
 
   root.RCFG = {
     COL, FONT, DEBUG,
-    BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, TEXT_DEPTH, CEIL_DEPTH, UI_DEPTH, UI_TEXT_DEPTH,
+    BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, CEIL_DEPTH, UI_DEPTH, UI_TEXT_DEPTH,
     CAT_ART_SCALE_BASE, WALK_FRAME_STEP
   };
 })(typeof window !== 'undefined' ? window : globalThis);

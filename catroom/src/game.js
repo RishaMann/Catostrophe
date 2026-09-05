@@ -1,7 +1,8 @@
 /* ============================================================================
    game.js — точка входа. Собирает RoomScene из миксинов (render/constants.js,
-   util.js, room/shell.js, room/itemsRender.js, cat/catAppearance.js,
-   cat/catBehavior.js, ui/hud.js, input.js) и запускает Phaser.Game. Сама
+   util.js, room/shell.js, room/itemsRender.js, room/lighting.js,
+   cat/catAppearance.js, cat/catBehavior.js, ui/hud.js, input.js) и запускает
+   Phaser.Game. Сама
    логика отрисовки/поведения — в этих файлах; тут только жизненный цикл
    сцены (preload/create/update) и каскадная загрузка кота (манифест →
    конфиги персонажей → только те PNG, что реально названы в sprites.*).
@@ -11,7 +12,7 @@
 
   const I = window.ISO;
   const { SCREEN_W, SCREEN_H } = I;
-  const { DEBUG, CAT_ART_SCALE_BASE, BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, TEXT_DEPTH, UI_DEPTH, UI_TEXT_DEPTH } = window.RCFG;
+  const { DEBUG, CAT_ART_SCALE_BASE, BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, UI_DEPTH, UI_TEXT_DEPTH } = window.RCFG;
   const { TextPool, catFrameNames } = window.GUTIL;
 
   /* ======================================================================== */
@@ -37,7 +38,19 @@
       // Фоновая арт-панорама комнаты — тот же кадр 9:16, что и канвас
       // (819×1456 = 540×960), поэтому ложится на весь канвас без перекоса и
       // совпадает по перспективе со стенами/полом, которые рисует drawShell().
+      // Два варианта на выбор — переключаются в «Настройки» (см. drawSettings
+      // в ui/hud.js, cycleBackground ниже): исходный тёплый вечер и новый
+      // тёмный ночной, под который как раз и расчитана динамическая
+      // подсветка (room/lighting.js) — на тёплом фоне со своим встроенным
+      // светом её почти не видно.
       this.load.image('roomBg', 'art/room_bg.jpg');
+      this.load.image('roomBg2', 'art/room_bg_2.jpg');
+      // Спрайтовая мебель (второй режим отрисовки, переключается в
+      // «Настройки») — манифест перечисляет, у каких id каталога есть
+      // вырезанные картинки и в каких состояниях (см. room/furnitureSprites.js
+      // и Furniture/manifest.json); сами PNG грузятся ниже, в
+      // createStep2LoadImages(), после того как манифест точно пришёл.
+      this.load.json('furnManifest', 'Furniture/manifest.json');
     }
 
     // Персонажи кота грузятся в 3 прохода, каждый — заново запущенный
@@ -65,7 +78,8 @@
     // борьбы с этим — обычные браузерные Image, у них такого лимита нет,
     // регистрируем в Phaser вручную через textures.addImage().
     createStep2LoadImages() {
-      const jobs = [];
+      window.FURN_SPRITES.setManifest(this.cache.json.get('furnManifest'));
+      const jobs = [...window.FURN_SPRITES.jobs('Furniture/')];
       this.catNames.forEach(name => {
         const cfg = this.cache.json.get('catcfg-' + name);
         catFrameNames(cfg).forEach(fn => {
@@ -116,7 +130,17 @@
       this.mode = 'view';
       this.pageInv = 0; this.pageSup = 0;
       this.showWalk = false; this.showLabels = DEBUG; this.showEmpty = DEBUG; this.catOn = true;
+      // Мебель из линий (процедурные силуэты, itemShapes.js) или из спрайтов
+      // (вырезанные картинки, room/furnitureSprites.js) — тумблер в
+      // «Настройки» (drawSettings/onDown). По умолчанию — прежнее поведение
+      // (линии), спрайты — осознанный выбор.
+      this.furnitureSprites = false;
+      // Выключатель у двери (верхний свет) и тап по подставке торшера — оба
+      // по умолчанию включены. См. room/lighting.js (collectLights) и
+      // input.js (hitSwitch/тап по лампе).
+      this.lightsOn = true; this.lampOn = true;
       this.drag = null;
+      this.listSwipeStart = null; // см. checkListSwipe (input.js)
       this.openingDrag = null; // 'door' | 'window' | null — см. dragOpening()
       this.uiDirty = true;
       this.shellDirty = true;
@@ -124,12 +148,22 @@
       // --- слои: фон-панорама, оболочка сцены, подсветка пустых зон при
       // драге, кот, пул предметов (по одному Graphics+Text на занятую зону),
       // UI поверх всего ---
-      this.add.image(0, 0, 'roomBg').setOrigin(0, 0)
+      this.backgrounds = [
+        { key: 'roomBg', ru: 'Тёплый вечер' },
+        { key: 'roomBg2', ru: 'Тёмная ночь' }
+      ];
+      this.bgIndex = 1; // тёмный ночной — под него сделана динамическая подсветка
+      this.bgImg = this.add.image(0, 0, this.backgrounds[this.bgIndex].key).setOrigin(0, 0)
         .setDisplaySize(SCREEN_W, SCREEN_H).setDepth(BG_DEPTH);
       this.gShell = this.add.graphics().setDepth(SHELL_DEPTH);
       this.tShell = new TextPool(this, TEXT_DEPTH);
       this.zoneGfx = this.add.graphics().setDepth(ZONE_DEPTH);
       this.tZones = new TextPool(this, TEXT_DEPTH);
+      // Свет от торшера/лампочки/люстры (room/lighting.js) — тень лежит на
+      // полу под предметами, свечение аддитивно поверх пола/стен/предметов и
+      // кота. Пересобираются вместе с остальной сценой, из rebuild().
+      this.gShadow = this.add.graphics().setDepth(SHADOW_DEPTH);
+      this.gGlow = this.add.graphics().setDepth(GLOW_DEPTH).setBlendMode(Phaser.BlendModes.ADD);
       // Кот — спрайт (Image), не векторная фигура: тень/реплика остаются на
       // отдельном Graphics чуть позади него.
       this.gCat = this.add.graphics().setDepth(0);
@@ -144,7 +178,17 @@
       // объект сцены.
       this.catPreviewImg = this.add.image(0, 0, this.catFrameKey(this.activeCatConfig().sprites.idle))
         .setOrigin(0.5, 1).setScale(0.5).setVisible(false).setDepth(UI_DEPTH + 0.5);
-      this.itemGfx = new Map(); // zid -> { g: Graphics, t: Text|null }
+      // Призрак переносимой спрайтовой мебели (drawGhost, ui/hud.js) — один
+      // переиспользуемый Image, как catPreviewImg; '__DEFAULT' — служебная
+      // текстура Phaser, реальную подставляет drawGhost перед показом.
+      this.ghostImg = this.add.image(0, 0, '__DEFAULT').setOrigin(0.5, 1).setVisible(false).setDepth(UI_DEPTH + 0.3);
+      // Миниатюры спрайтовой мебели в списке «Инвентарь» (drawList,
+      // ui/hud.js) — по одной на видимую ячейку (их всегда 3, см. `per` в
+      // drawList), поверх обычных векторных IC.drawIcon, только когда включён
+      // спрайтовый режим и у предмета есть картинка.
+      this.invIconImgs = [0, 1, 2].map(() =>
+        this.add.image(0, 0, '__DEFAULT').setVisible(false).setDepth(UI_DEPTH + 0.5));
+      this.itemGfx = new Map(); // zid/iid -> { g: Graphics, t: Text|null, img: Image|null }
       this.gUI = this.add.graphics().setDepth(UI_DEPTH);
       this.tUI = new TextPool(this, UI_TEXT_DEPTH);
 
@@ -158,7 +202,10 @@
       this.input.on('pointerdown', p => this.onDown(p));
       this.input.on('pointermove', p => {
         if (this.openingDrag) { this.dragOpening(p.worldX, p.worldY); return; }
-        if (this.drag) { this.drag.p = [p.worldX, p.worldY]; }
+        if (this.drag) {
+          this.drag.p = [p.worldX, p.worldY];
+          this.checkListSwipe(p.worldX, p.worldY);
+        }
       });
       this.input.on('pointerup', p => {
         if (this.openingDrag) { this.openingDrag = null; return; }
@@ -166,6 +213,15 @@
       });
 
       this.idleCycle();
+    }
+
+    // Переключатель фона в «Настройки» (drawSettings/onDown, ui/hud.js и
+    // input.js) — просто следующая по кругу текстура на уже существующем
+    // Image, без пересоздания сцены.
+    cycleBackground() {
+      this.bgIndex = (this.bgIndex + 1) % this.backgrounds.length;
+      this.bgImg.setTexture(this.backgrounds[this.bgIndex].key);
+      this.uiDirty = true;
     }
 
     update(time, delta) {
@@ -190,6 +246,7 @@
   Object.assign(RoomScene.prototype,
     window.MIXIN_SHELL,
     window.MIXIN_ITEMS,
+    window.MIXIN_LIGHTING,
     window.MIXIN_CAT_APPEARANCE,
     window.MIXIN_CAT_BEHAVIOR,
     window.MIXIN_HUD,

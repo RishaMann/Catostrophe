@@ -145,10 +145,12 @@
       this.catImg.setPosition(b[0], b[1] + bobY);
       this.catImg.setDepth(depth);
 
-      // тень и реплика — по-прежнему векторные, чуть позади спрайта
+      // тень и реплика — по-прежнему векторные, чуть позади спрайта. Тень —
+      // по одной на каждый источник света в радиусе (room/lighting.js:
+      // drawCatShadow), не фиксированный кружок: считается каждый кадр, кот
+      // двигается в отличие от мебели, чьи тени пересобираются в rebuild().
       g.setDepth(depth - 0.001);
-      g.fillStyle(0x000000, 0.32);
-      g.fillEllipse(b[0], b[1], 26, 26 * (I.PROJ.tilt || 0.5));
+      this.drawCatShadow(g, cat.x, cat.y);
 
       if (cat.bubble) {
         const tw = cat.bubble.length * 5.6 + 18, bx = b[0] - tw / 2, by = b[1] - 58 + bobY;

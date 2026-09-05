@@ -31,6 +31,17 @@
         return;
       }
 
+      // Выключатель верхнего света — обычный бытовой прибор, тоже до всего
+      // остального и в любом режиме (в отличие от крепления лампы/люстры на
+      // потолке — то средство редактирования, доступно только в инвентаре).
+      if (this.hitSwitch(x, y)) {
+        this.lightsOn = !this.lightsOn;
+        this.shellDirty = true;
+        this.drawLighting();
+        this.rebuildItemGfx(); // тусклый/яркий значок лампочки/люстры на потолке
+        return;
+      }
+
       const listOnR = this.mode === 'inventory' || this.mode === 'supplies';
 
       // закрыть список
@@ -50,6 +61,11 @@
           // берутся в руку и переносятся, а не срабатывают по одному тапу:
           // куда донесли (до кота / до пола / до миски), то и произошло.
           this.drag = { kind: this.mode === 'inventory' ? 'new' : 'supply', iid: cell.id, p: [x, y] };
+          // Тот же тач может оказаться свайпом по списку, не переносом
+          // предмета — см. checkListSwipe: решаем постфактум, по тому, куда
+          // палец поехал дальше (в комнату — перенос, вбок внутри панели —
+          // страница).
+          this.listSwipeStart = { x, y };
           this.uiDirty = true;
           return;
         }
@@ -63,8 +79,13 @@
         if (t) {
           this[t.k] = !this[t.k];
           if (t.k === 'showWalk') this.shellDirty = true;
-          if (t.k === 'showLabels') this.rebuildItemGfx();
+          if (t.k === 'showLabels' || t.k === 'furnitureSprites') this.rebuildItemGfx();
           this.uiDirty = true;
+          return;
+        }
+        const bg = this.bgSwitchRect;
+        if (bg && x >= bg.x && x <= bg.x + bg.w && y >= bg.y && y <= bg.y + bg.h) {
+          this.cycleBackground();
           return;
         }
         if (x >= S.x && x <= S.x + S.w && y >= S.y && y <= S.y + S.h) return;
@@ -155,6 +176,12 @@
             poly: I.zonePoly(this.zmap[zid], F)
           });
         });
+        // Потолочный предмет — свой хит-регион (ceilHitPoly, shell.js), не
+        // общий zonePoly (у CEIL зоны нет вовсе). Глубина заведомо больше
+        // любой floor/wall — рисуется он тоже поверх всего (CEIL_DEPTH).
+        if (this.st.place.CEIL) {
+          cands.push({ iid: this.st.place.CEIL, from: 'CEIL', depth: 1e9, poly: this.ceilHitPoly() });
+        }
         cands.sort((a, b) => b.depth - a.depth);
         for (const c of cands) {
           if (inPoly([x, y], c.poly)) {
@@ -162,6 +189,20 @@
             this.uiDirty = true;
             return;
           }
+        }
+      }
+
+      // Тап по подставке торшера — включить/выключить (только не в
+      // инвентаре: там тап по предмету значит «взять переставить», см.
+      // подбор existing чуть выше).
+      if (this.mode === 'view' && !this.drag && this.st.floor.lamp) {
+        const pos = this.st.floor.lamp;
+        const poly = I.floorPoly(I.floorRect(D.ITEMS.lamp, pos.x, pos.y));
+        if (inPoly([x, y], poly)) {
+          this.lampOn = !this.lampOn;
+          this.drawLighting();
+          this.rebuildItemGfx(); // тёплая/тусклая точка у абажура
+          return;
         }
       }
 
@@ -176,7 +217,26 @@
       if (gx >= 0 && gy >= 0 && gx <= F && gy <= F) this.walkTo(gx, gy, () => this.idleCycle());
     },
 
+    // Свайп по списку «Инвентарь»/«Запасы» — палец, взявший предмет из ячейки
+    // (см. onDown: this.listSwipeStart взводится там же, где this.drag),
+    // сдвинулся в сторону вбок, не покидая панель списка. Решаем не в
+    // onDown/onUp, а по ходу движения (pointermove, game.js) — иначе пришлось
+    // бы ждать отпускания, чтобы понять, было ли это «взять предмет» или
+    // «пролистать», и предмет всё это время висел бы над пальцем как призрак.
+    checkListSwipe(x, y) {
+      if (!this.listSwipeStart || !this.drag || (this.drag.kind !== 'new' && this.drag.kind !== 'supply')) return;
+      if (!inPoly([x, y], this.ui.R.poly)) { this.listSwipeStart = null; return; } // ушёл в комнату — обычный перенос
+      const dx = x - this.listSwipeStart.x, dy = y - this.listSwipeStart.y;
+      if (Math.abs(dx) < 28 || Math.abs(dx) < Math.abs(dy)) return; // пока не ясно, свайп это или лёгкое дрожание пальца
+      const src = this.listSource(), pages = Math.max(1, Math.ceil(src.length / 3));
+      const dir = dx < 0 ? 1 : -1;
+      if (this.mode === 'inventory') this.pageInv = clamp(this.pageInv + dir, 0, pages - 1);
+      else this.pageSup = clamp(this.pageSup + dir, 0, pages - 1);
+      this.drag = null; this.listSwipeStart = null; this.uiDirty = true;
+    },
+
     onUp(p) {
+      this.listSwipeStart = null;
       if (!this.drag) return;
       const drag = this.drag;
       const x = p.worldX, y = p.worldY, F = I.PROJ.F;
@@ -190,6 +250,23 @@
       const it = D.ITEMS[drag.iid];
       const isExisting = drag.kind === 'existing';
 
+      // Потолочный предмет (лампочка/люстра) — слот всегда один (st.place.
+      // CEIL), своих x,y нет (позиция — st.light, крепление двигается
+      // отдельно, см. hitLight/dragOpening), поэтому не перебираем зоны (их
+      // для ceil и не заводили, см. ACCEPTS в iso.js) — просто вешаем куда
+      // угодно на сцену, кроме панелей.
+      if (it.cat === 'ceil') {
+        if (isExisting && inPoly([x, y], this.ui.R.poly)) {
+          delete this.st.place.CEIL;
+          this.rebuild();
+        } else if (!inPoly([x, y], this.ui.L.poly) && !inPoly([x, y], this.ui.R.poly)) {
+          this.st.place.CEIL = drag.iid;
+          this.rebuild();
+        }
+        this.drag = null; this.uiDirty = true;
+        return;
+      }
+
       if (it.s) {
         // floor-мебель — свободная расстановка (st.floor), не конечный
         // список зон. from у floor-кандидата — сам iid (см. onDown).
@@ -199,8 +276,12 @@
           this.drag = null; this.uiDirty = true;
           return;
         }
-        const [cx, cy] = I.unP(x, y);
-        const reason = I.rejectFloor(cx, cy, it, this.st, D.ITEMS, F, drag.from);
+        const [ux, uy] = I.unP(x, y);
+        // «встык к стене» — если точка попадает в полосу у задней стены,
+        // предмет доводится вплотную к ней, а не остаётся там, где палец
+        // его фактически отпустил (см. floorSnap в iso.js).
+        const { x: cx, y: cy } = I.floorSnap(it, ux, uy);
+        const reason = I.rejectFloor(cx, cy, it, this.st, D.ITEMS, F, this.LAY, drag.from);
         if (!reason) {
           const prev = isExisting ? this.st.floor[drag.from] : null;
           this.st.floor[drag.iid] = { x: cx, y: cy };
@@ -255,6 +336,6 @@
     // shellDirty тоже — крепление лампы в drawShell рисуется только пока
     // mode==='inventory', так что вход/выход из инвентаря обязан перерисовать
     // оболочку, не только UI.
-    setMode(m) { this.mode = m; this.drag = null; this.ui = this.panelGeo(); this.uiDirty = true; this.shellDirty = true; }
+    setMode(m) { this.mode = m; this.drag = null; this.listSwipeStart = null; this.ui = this.panelGeo(); this.uiDirty = true; this.shellDirty = true; }
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -26,7 +26,7 @@
     rebuild() {
       const r = I.buildScene(this.params, this.st, D.ITEMS);
       this.zones = r.zones; this.zmap = r.zmap; this.LAY = r.LAY;
-      this.NAV = I.buildNav(D.ITEMS, this.st.floor, this.cat);
+      this.NAV = I.buildNav(D.ITEMS, this.st.floor, this.cat, this.LAY);
 
       // Защитный респавн: если кот по любой причине оказался вне проходимой
       // области (перестановка мебели, кривой конфиг сцены), возвращаем его на
@@ -41,6 +41,7 @@
       this.ui = this.panelGeo();
       this.shellDirty = true;
       this.rebuildItemGfx();
+      this.drawLighting();
     },
 
     /* ---------- общий помощник отрисовки многоугольника на произвольный Graphics ---------- */
@@ -81,6 +82,20 @@
     hitDoor(x, y) { return inPoly([x, y], this.doorPoly()); },
     hitWindow(x, y) { return inPoly([x, y], this.winPoly()); },
 
+    // Габарит для спрайта шторы (room/itemsRender.js: drawWallItemInto) — НЕ
+    // зона WIN_ROD/WIN_FRAME (те — тонкие полоски под карниз/раму, вписанная
+    // в них картинка выходила бы крошечной), а весь проём от пола почти до
+    // потолка вокруг окна: штора на референсе нарисована именно так —
+    // от карниза до подоконника/пола. Сторона — та же, что у окна (win.side),
+    // штора всегда «про это окно», в какую бы decor-зону её ни поставили.
+    curtainPoly() {
+      const F = I.PROJ.F, w0 = this.st.win.pos - 0.3, w1 = this.st.win.pos + WIN_W + 0.3;
+      const z0 = 0, z1 = WALL - 0.3;
+      return this.st.win.side === 'frontRight'
+        ? [I.P(F, w0, z0), I.P(F, w1, z0), I.P(F, w1, z1), I.P(F, w0, z1)]
+        : [I.P(w0, 0, z0), I.P(w1, 0, z0), I.P(w1, 0, z1), I.P(w0, 0, z1)];
+    },
+
     // Точка крепления лампы/люстры на потолке — тот же квадрат-подсказка,
     // что уже рисовался в drawZoneOverlay (амбер-рамка вокруг this.st.light),
     // теперь ещё и хватается/двигается, как дверь/окно.
@@ -90,6 +105,21 @@
       I.P(L.x + .5, L.y + .5, WALL), I.P(L.x - .5, L.y + .5, WALL)];
     },
     hitLight(x, y) { return inPoly([x, y], this.lightPoly()); },
+
+    // Хит-регион самого потолочного предмета (лампочка/люстра) — вокруг
+    // шнура+кружка, которые рисует drawCeilInto (room/itemsRender.js), НЕ
+    // вокруг квадрата крепления (lightPoly — это для перетаскивания точки
+    // подвеса, другое действие). У CEIL нет геометрии зоны вообще (см.
+    // ACCEPTS/dynamicZones в iso.js — там только 'wall'/'ceil'/'surface' по
+    // категории, а не по месту), поэтому обычный zonePoly тут не годится.
+    ceilHitPoly() {
+      const iid = this.st.place.CEIL;
+      if (!iid) return null;
+      const L = this.st.light, b = I.P(L.x, L.y, WALL - 0.7);
+      const r = iid === 'chandelier' ? 10 : 5, pad = r + 14;
+      const cx = b[0], cy = b[1] + 5;
+      return [[cx - pad, cy - pad], [cx + pad, cy - pad], [cx + pad, cy + pad], [cx - pad, cy + pad]];
+    },
     // Обратная проекция для точки НА ПОТОЛКЕ (z=WALL), не на полу (z=0) —
     // I.unP этого не умеет (только пол), поэтому та же поправка на WALL*ZH,
     // что была в light-ветке startMove() исходного app.js.
@@ -97,6 +127,26 @@
       const u = (sx - OX) / I.PROJ.TW, v = (sy - I.PROJ.OY + WALL * I.PROJ.ZH) / I.PROJ.TH;
       return [(u + v) / 2, (v - u) / 2];
     },
+
+    // Выключатель верхнего света — на левой стене рядом с дверью (тап в
+    // любом режиме, см. input.js: это обычный бытовой прибор, а не элемент
+    // редактирования расстановки). Дверь бывает и на «своей» боковой стене
+    // (side==='left'), и уехавшей за угол на открытый передний край
+    // (side==='frontLeft') — там стены физически нет, крепить выключатель
+    // некуда, оставляем его на фиксированном месте у угла.
+    switchPos() {
+      const F = I.PROJ.F;
+      const y = this.st.door.side === 'left'
+        ? clamp(this.st.door.pos - 0.55, 0.35, F - 0.35)
+        : 0.8;
+      return { y, z: 1.35 };
+    },
+    switchPoly() {
+      const { y, z } = this.switchPos();
+      const a = y - 0.15, c = y + 0.15, b = z - 0.2, d = z + 0.2;
+      return [I.P(0, a, b), I.P(0, c, b), I.P(0, c, d), I.P(0, a, d)];
+    },
+    hitSwitch(x, y) { return inPoly([x, y], this.switchPoly()); },
 
     /* ==================== ДВЕРЬ/ОКНО — ПЕРЕТАСКИВАНИЕ ====================
        Раньше двигались только по своей задней стене; на самом деле в
@@ -169,6 +219,15 @@
       poly(wp, 0x7896BE, 0.22, COL.chalk, 1.1);
       c = I.centroid(wp);
       this.tShell.put(c[0], c[1], 'окно', 10, '#E8A33Dcc', 'center');
+
+      // --- выключатель верхнего света — обычный бытовой прибор, виден и
+      // кликабелен в любом режиме (не только при открытом инвентаре, в
+      // отличие от крепления лампы ниже — то средство редактирования). ---
+      const sp = this.switchPoly();
+      poly(sp, COL.chalk, 0.14, COL.chalk, 1);
+      c = I.centroid(sp);
+      g.fillStyle(this.lightsOn ? COL.amber : COL.chalk, this.lightsOn ? 0.9 : 0.35);
+      g.fillCircle(c[0], c[1], 3);
 
       // --- точка крепления лампы/люстры — двигается, как дверь/окно (см.
       // hitLight/dragOpening), только пока открыт инвентарь: это средство

@@ -16,10 +16,16 @@
   },
 
   "sprites": {
-    "walk": [
-      "walk_backleft_0", "walk_backleft_1", "walk_backleft_2",
-      "walk_backleft_3", "walk_backleft_4"
-    ],
+    "walk": {
+      "down":      { "frames": ["walk_backleft_0", "walk_backleft_1", "walk_backleft_2", "walk_backleft_3", "walk_backleft_4"], "flip": false },
+      "downleft":  { "frames": ["walk_frontleft_0", "walk_frontleft_1", "walk_frontleft_2", "walk_frontleft_3", "walk_frontleft_4", "walk_frontleft_5"], "flip": false },
+      "downright": { "frames": ["walk_frontleft_0", "walk_frontleft_1", "walk_frontleft_2", "walk_frontleft_3", "walk_frontleft_4", "walk_frontleft_5"], "flip": true },
+      "left":      { "frames": ["walk_frontleft_0", "walk_frontleft_1", "walk_frontleft_2", "walk_frontleft_3", "walk_frontleft_4", "walk_frontleft_5"], "flip": false },
+      "right":     { "frames": ["walk_frontleft_0", "walk_frontleft_1", "walk_frontleft_2", "walk_frontleft_3", "walk_frontleft_4", "walk_frontleft_5"], "flip": true },
+      "up":        { "frames": ["walk_frontleft_alt_0", "walk_frontleft_alt_1", "walk_frontleft_alt_2", "walk_frontleft_alt_3", "walk_frontleft_alt_4", "walk_frontleft_alt_5"], "flip": false },
+      "upleft":    { "frames": ["walk_away_0", "walk_away_1", "walk_away_2", "walk_away_3", "walk_away_4", "walk_away_5"], "flip": false },
+      "upright":   { "frames": ["walk_away_0", "walk_away_1", "walk_away_2", "walk_away_3", "walk_away_4", "walk_away_5"], "flip": true }
+    },
     "idle": "sit_front_a",
     "sit": "sit_front_b",
     "lie": "lie_front_a",

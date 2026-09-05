@@ -49,12 +49,15 @@
         { id: 'settings', l: 'Настройки' }, { id: 'inventory', l: 'Инвентарь' }, { id: 'supplies', l: 'Корм' }
       ]);
       if (listOnR) this.drawList(g, this.ui.R);
-      else this.drawButtons(g, this.ui.R, [
+      else {
+        this.invIconImgs.forEach(im => im.setVisible(false));
+        this.drawButtons(g, this.ui.R, [
         { id: 'quests', l: 'Задания' }, { id: 'shop', l: 'Магазин' },
         // Раньше «—» (заглушка) — теперь выбор персонажа: тап переключает на
         // следующего по списку из Cats/manifest.json, подпись — имя текущего.
         { id: 'character', l: this.activeCatConfig().name }
-      ]);
+        ]);
+      }
 
       if (this.mode === 'settings') this.drawSettings(g);
       if (this.mode === 'quests') this.drawPlaceholderPanel(g, 'Задания');
@@ -62,6 +65,7 @@
       if (this.mode === 'characters') this.drawCharacterPanel(g);
       else this.catPreviewImg.setVisible(false);
       if (this.drag) this.drawGhost(g);
+      else this.ghostImg.setVisible(false);
       this.tUI.end();
     },
 
@@ -144,13 +148,31 @@
       this.tUI.put(pn.btn[0].x, pn.btn[0].y - 16, this.mode === 'inventory' ? 'Инвентарь' : 'Запасы', 10, '#EBE2D5aa');
       this.tUI.put(pn.btn[2].x + pn.btn[2].w - 4, pn.btn[0].y - 14, '× закрыть', 10, '#E8A33Dcc', 'right');
 
+      const FS = root.FURN_SPRITES;
       this.listRects = [];
       for (let i = 0; i < per; i++) {
         const r = pn.btn[i], it = src[page * per + i];
         g.fillStyle(COL.chalk, 0.06); g.fillRoundedRect(r.x, r.y, r.w, r.h, 10);
         g.lineStyle(1.1, COL.chalk, 0.42); g.strokeRoundedRect(r.x, r.y, r.w, r.h, 10);
-        if (!it) { this.listRects.push(null); continue; }
-        IC.drawIcon(g, it.id, r.x + r.w / 2, r.y + r.h / 2 - 4, pn.iconS);
+        if (!it) { this.listRects.push(null); this.invIconImgs[i].setVisible(false); continue; }
+        // В спрайтовом режиме — миниатюра самой картинки вместо векторной
+        // IC.drawIcon (см. this.furnitureSprites, drawSettings) — тем же
+        // предметам, для которых включённый тумблер вообще что-то меняет на
+        // сцене; у остальных (нет вырезанной картинки) иконка остаётся
+        // прежней векторной, чтобы список не выглядел «наполовину пустым».
+        const state = this.furnitureSprites && FS && FS.pickState(it.id, 'new');
+        const im = this.invIconImgs[i];
+        if (state) {
+          const key = FS.textureKey(it.id, state);
+          const src2 = this.textures.get(key).getSourceImage();
+          const boxW = r.w * 0.7, boxH = r.h * 0.62;
+          const scale = Math.min(boxW / src2.width, boxH / src2.height);
+          im.setTexture(key).setVisible(true).setScale(scale)
+            .setPosition(r.x + r.w / 2, r.y + r.h / 2 - 4);
+        } else {
+          im.setVisible(false);
+          IC.drawIcon(g, it.id, r.x + r.w / 2, r.y + r.h / 2 - 4, pn.iconS);
+        }
         this.tUI.put(r.x + r.w / 2, pn.labelY, it.ru, 10, '#EBE2D5aa', 'center');
         this.listRects.push({ r, id: it.id });
       }
@@ -171,7 +193,7 @@
     },
 
     drawSettings(g) {
-      const S = { x: 24, y: 300, w: 492, h: 300 };
+      const S = { x: 24, y: 300, w: 492, h: 346 };
       g.fillStyle(COL.panel, 0.97); g.fillRoundedRect(S.x, S.y, S.w, S.h, 14);
       g.lineStyle(1.2, COL.chalk, 0.3); g.strokeRoundedRect(S.x, S.y, S.w, S.h, 14);
       this.tUI.put(S.x + 20, S.y + 28, 'Настройки', 11, '#EBE2D5');
@@ -197,6 +219,29 @@
         this.tUI.put(x + 108, y + 18, l, 10, on ? '#E8A33D' : '#EBE2D5aa', 'center');
         this.setBtns.push({ x, y, w: 216, h: 36, k });
       });
+
+      // Мебель: линии (процедурные силуэты) или спрайты (вырезанные картинки
+      // из Furniture/, см. room/furnitureSprites.js/itemsRender.js) — на всю
+      // ширину, не в паре с debug-тумблерами выше: это выбор арта, не
+      // отладочный слой.
+      const fsY = S.y + 90 + 2 * 46 + 8, fsOn = this.furnitureSprites;
+      g.fillStyle(fsOn ? COL.amber : COL.chalk, fsOn ? 0.2 : 0.05);
+      g.fillRoundedRect(S.x + 20, fsY, S.w - 40, 36, 9);
+      g.lineStyle(1.1, fsOn ? COL.amber : COL.chalk, fsOn ? 1 : 0.28);
+      g.strokeRoundedRect(S.x + 20, fsY, S.w - 40, 36, 9);
+      this.tUI.put(S.x + 20 + (S.w - 40) / 2, fsY + 18, 'Мебель: ' + (fsOn ? 'спрайты' : 'линии'),
+        10, fsOn ? '#E8A33D' : '#EBE2D5aa', 'center');
+      this.setBtns.push({ x: S.x + 20, y: fsY, w: S.w - 40, h: 36, k: 'furnitureSprites' });
+
+      // Фон сцены — переключение по кругу (cycleBackground, game.js), не
+      // тумблер: вариантов больше двух не будет редко, но кнопка та же, что
+      // и у остальных настроек, просто подпись — текущий выбор, а не вкл/выкл.
+      const bgY = S.y + 90 + 3 * 46 + 16, bgW = S.w - 40;
+      g.fillStyle(COL.chalk, 0.06); g.fillRoundedRect(S.x + 20, bgY, bgW, 36, 9);
+      g.lineStyle(1.1, COL.chalk, 0.28); g.strokeRoundedRect(S.x + 20, bgY, bgW, 36, 9);
+      this.tUI.put(S.x + 20 + bgW / 2, bgY + 18, 'Фон: ' + this.backgrounds[this.bgIndex].ru,
+        10, '#EBE2D5aa', 'center');
+      this.bgSwitchRect = { x: S.x + 20, y: bgY, w: bgW, h: 36 };
 
       const N = this.NAV;
       const msg = !N ? '' : N.unreachable.length
@@ -290,24 +335,51 @@
       const p = this.drag.p;
       if (!p) return;
 
-      if (this.drag.kind === 'supply') { this.drawSupplyGhostIcon(g, p); return; }
+      if (this.drag.kind === 'supply') { this.ghostImg.setVisible(false); this.drawSupplyGhostIcon(g, p); return; }
 
       const it = D.ITEMS[this.drag.iid];
-      if (!it || !it.s) { this.drawSupplyGhostIcon(g, p); return; } // настенное/потолочное/поверхностное — своих габаритов нет
+      // настенное/потолочное/поверхностное — своих габаритов нет, спрайтовый
+      // призрак (ghostImg) им тоже не положен, тот же обезличенный пузырь.
+      if (!it || !it.s) { this.ghostImg.setVisible(false); this.drawSupplyGhostIcon(g, p); return; }
 
-      const [wx, wy] = I.unP(p[0], p[1]);
+      // Призрак показывает точку ПОСЛЕ floorSnap — иначе у стены он висел бы
+      // там, где палец, а фактическая постановка (onUp, input.js) молча
+      // доводила бы предмет чуть в сторону: WYSIWYG сорван.
+      const [ux, uy] = I.unP(p[0], p[1]);
+      const { x: wx, y: wy } = I.floorSnap(it, ux, uy);
       const [w, d] = I.floorOrient(it, wx, wy);
       const h = it.s[2];
       const poly = (pts, fill, fa, stroke, sw, close) => this.polyOn(g, pts, fill, fa, stroke, sw, close);
-      const shapes = root.ITEM_SHAPES;
-      if (shapes && shapes.has(this.drag.iid)) {
-        shapes.draw(this.drag.iid, { g, poly, cx: wx, cy: wy, w, d, h, I, COL });
+      const FS = root.FURN_SPRITES;
+      const state = this.furnitureSprites && FS && FS.pickState(this.drag.iid, 'new');
+      if (state) {
+        // Тот же спрайт, масштаб, опорная точка (перед, не центр) и
+        // разворот-зеркало, что и у уже стоящего предмета
+        // (drawFloorItemInto, room/itemsRender.js) — призрак должен
+        // WYSIWYG-совпадать с тем, что окажется на полу после отпускания.
+        // Формулы те же, см. подробные комментарии там же.
+        const key = FS.textureKey(this.drag.iid, state);
+        const src = this.textures.get(key).getSourceImage();
+        const targetW = (w + d) * I.PROJ.TW;
+        const targetH = (w + d) * I.PROJ.TH + h * I.PROJ.ZH;
+        const scale = Math.min(targetW / src.width, targetH / src.height);
+        const rot = wx <= wy, depFull = rot ? w : d;
+        const front = rot ? [wx + depFull / 2, wy] : [wx, wy + depFull / 2];
+        const anchor = I.P(front[0], front[1]);
+        this.ghostImg.setTexture(key).setVisible(true).setAlpha(0.88)
+          .setScale(scale).setPosition(anchor[0], anchor[1]).setFlipX(!rot);
       } else {
-        const A = [wx - w / 2, wy - d / 2], B = [wx + w / 2, wy - d / 2];
-        const C = [wx + w / 2, wy + d / 2], E = [wx - w / 2, wy + d / 2];
-        poly([I.P(B[0], B[1]), I.P(C[0], C[1]), I.P(C[0], C[1], h), I.P(B[0], B[1], h)], COL.chalk, 0.10, COL.chalk, 1);
-        poly([I.P(E[0], E[1]), I.P(C[0], C[1]), I.P(C[0], C[1], h), I.P(E[0], E[1], h)], COL.chalk, 0.05, COL.chalk, 1);
-        poly([I.P(A[0], A[1], h), I.P(B[0], B[1], h), I.P(C[0], C[1], h), I.P(E[0], E[1], h)], COL.chalk, 0.17, COL.chalk, 1);
+        this.ghostImg.setVisible(false);
+        const shapes = root.ITEM_SHAPES;
+        if (shapes && shapes.has(this.drag.iid)) {
+          shapes.draw(this.drag.iid, { g, poly, cx: wx, cy: wy, w, d, h, I, COL });
+        } else {
+          const A = [wx - w / 2, wy - d / 2], B = [wx + w / 2, wy - d / 2];
+          const C = [wx + w / 2, wy + d / 2], E = [wx - w / 2, wy + d / 2];
+          poly([I.P(B[0], B[1]), I.P(C[0], C[1]), I.P(C[0], C[1], h), I.P(B[0], B[1], h)], COL.chalk, 0.10, COL.chalk, 1);
+          poly([I.P(E[0], E[1]), I.P(C[0], C[1]), I.P(C[0], C[1], h), I.P(E[0], E[1], h)], COL.chalk, 0.05, COL.chalk, 1);
+          poly([I.P(A[0], A[1], h), I.P(B[0], B[1], h), I.P(C[0], C[1], h), I.P(E[0], E[1], h)], COL.chalk, 0.17, COL.chalk, 1);
+        }
       }
       // метка-перекрестье в точке касания — предмет теперь большой, крестик
       // у самого пальца всё равно полезен для точности
@@ -322,7 +394,7 @@
       // исключает сам предмет из проверки на пересечение с самим собой.
       const F = I.PROJ.F;
       const labelAnchor = I.P(wx, wy, h + 0.25);
-      const reason = I.rejectFloor(wx, wy, it, this.st, D.ITEMS, F, this.drag.from);
+      const reason = I.rejectFloor(wx, wy, it, this.st, D.ITEMS, F, this.LAY, this.drag.from);
       if (reason) {
         this.tUI.put(labelAnchor[0], labelAnchor[1] - 6, reason, 9, '#E8A33D', 'center');
       } else if (it.touch) {

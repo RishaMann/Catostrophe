@@ -49,15 +49,20 @@
   ];
 
   /* ---------- полезная область: что реально попадает в кадр ---------- */
-  // Lx — сколько клеток вширь помещается до левого/правого края кадра.
-  // Ld — сколько клеток вглубь помещается до линии MAXY, ниже которой живут панели.
-  // Зоны раскладываются только внутри этого прямоугольника. Клетки пола за его
-  // пределами существуют, но ничего на них не ставится: на узком кадре игрок до
-  // них не дотянется.
+  // Lx — сколько клеток вширь (по |x-y|) помещается до левого/правого края
+  // кадра (ширина канваса SCREEN_W фиксирована, эта граница реальна всегда).
+  // Ld — сколько клеток вглубь (по x+y) помещается до низа канваса. Раньше
+  // считалась от MAXY=700 — константы под старую, статичную раскладку
+  // нижних панелей. Панели теперь динамические (panelGeo/hud.js подстраивает
+  // их высоту под фактический передний угол пола, I.P(F,F)) и сами уступают
+  // место полу, поэтому реальный потолок глубины — низ канваса SCREEN_H, а
+  // не MAXY: со старым MAXY сюда отбраковывалась значительная часть пола,
+  // которая на самом деле прекрасно видна на экране (см. баг «здесь уже не
+  // видно на экране» на местах, которые визуально посреди комнаты).
   function layoutBounds(p) {
     const TW = kScale(p), TH = TW * p.tilt, ZH = TW * 1.2, OY = TOPM + WALL * ZH;
     const Lx = (OX - 18) / TW;
-    const Ld = (MAXY - OY) / TH;
+    const Ld = (SCREEN_H - OY) / TH;
     const Wend = Math.min(p.floor - 0.1, Lx - 0.05);
     return { Lx, Ld, Wend, F: p.floor };
   }
@@ -189,6 +194,18 @@
     return [cx - w / 2, cy - d / 2, cx + w / 2, cy + d / 2];
   }
 
+  // «Встык к стене»: если точка, куда бросили предмет, и так уже в полосе
+  // 'back' (тот же порог 1.3, что у floorBand), подравниваем его вплотную к
+  // ЭТОЙ стене — иначе мебель «плавает» в произвольных сантиметрах от неё
+  // (там, где палец её бросил), а не стоит как положено мебели у стены.
+  // cx<=cy — тот же тай-брейк, что уже решает сторону в floorOrient().
+  function floorSnap(it, cx, cy) {
+    const [w, d] = floorOrient(it, cx, cy);
+    if (cx < 1.3 && cx <= cy) return { x: w / 2, y: cy };
+    if (cy < 1.3) return { x: cx, y: d / 2 };
+    return { x: cx, y: cy };
+  }
+
   // Контур floor-прямоугольника в экранных координатах — тот же порядок
   // углов, что у zonePoly() для обычного (не wall/surface) случая.
   function floorPoly(r) {
@@ -205,13 +222,26 @@
 
   // excludeIid — свой же iid при перестановке уже стоящего предмета: иначе
   // предмет всегда конфликтовал бы сам с собой на прежнем месте.
-  function rejectFloor(cx, cy, it, st, items, F, excludeIid) {
+  // LAY (layoutBounds()) — то же ограничение видимой камерой части пола,
+  // что раньше держало курированные зоны внутри кадра (Lx/Ld): свободная
+  // расстановка физически разрешает весь квадрат [0,F]², но часть его при
+  // текущем zoom/наклоне рисуется за пределами экрана (под UI-панелями или
+  // за левым/правым краем) — без этой проверки туда можно было утащить кота
+  // или мебель, и они пропадали из вида.
+  function rejectFloor(cx, cy, it, st, items, F, LAY, excludeIid) {
     const r = floorRect(it, cx, cy);
     if (r[0] < -0.01 || r[1] < -0.01 || r[2] > F + 0.01 || r[3] > F + 0.01) return 'не помещается в комнату';
+    if (LAY) {
+      const corners = [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
+      const offscreen = corners.some(([x, y]) =>
+        x - y > LAY.Lx + 0.01 || y - x > LAY.Lx + 0.01 || x + y > LAY.Ld + 0.01);
+      if (offscreen) return 'здесь уже не видно на экране';
+    }
     if (overlap(r, doorClearRect(st, F))) return 'проход к двери должен оставаться свободным';
 
     const band = floorBand(cx, cy, F);
-    const okCat = ACCEPTS[band].includes(it.cat) || (band === 'front' && it.frontOk);
+    const okCat = ACCEPTS[band].includes(it.cat)
+      || (band === 'front' && it.frontOk) || (band === 'mid' && it.midOk);
     if (!okCat) return {
       back: 'сюда встаёт мебель у стен', mid: 'здесь только среднее и низкое', front: 'ближний край держим низким'
     }[band];
@@ -326,12 +356,17 @@
     return { solid, touch };
   }
 
-  function buildNav(items, floorState, catPos) {
+  // LAY — то же ограничение видимой камерой части пола, что и в
+  // rejectFloor(): без него кот мог забрести в угол квадрата [0,F]², который
+  // физически существует, но при текущем zoom/наклоне рисуется за кадром
+  // (под UI-панелями или за краем экрана), и «пропадать» из виду.
+  function buildNav(items, floorState, catPos, LAY) {
     const F = PROJ.F, GN = Math.round(F / STEP) + 1;
     const b = { x0: CAT_R, y0: CAT_R, x1: F - CAT_R, y1: F - CAT_R };
     const { solid, touch } = navObstaclesFloor(items, floorState);
     const free = (x, y) => {
       if (x < b.x0 || y < b.y0 || x > b.x1 || y > b.y1) return false;
+      if (LAY && (x - y > LAY.Lx - CAT_R || y - x > LAY.Lx - CAT_R || x + y > LAY.Ld - CAT_R)) return false;
       return !solid.some(r => x > r[0] - CAT_R && x < r[2] + CAT_R && y > r[1] - CAT_R && y < r[3] + CAT_R);
     };
     const idx = (i, j) => i * GN + j, ok = [];
@@ -431,7 +466,7 @@
     layoutBounds, generateLayout, dynamicZones, buildScene,
     ACCEPTS, fit, footprint, reject, depth, zonePoly,
     // свободная расстановка floor-мебели (см. блок выше dynamicZones)
-    floorBand, floorOrient, floorRect, floorPoly, floorDepth, floorFootprint, rejectFloor,
+    floorBand, floorOrient, floorRect, floorSnap, floorPoly, floorDepth, floorFootprint, rejectFloor,
     buildNav, findPath, randomSpot, nearSpot
   };
 })(typeof window !== 'undefined' ? window : globalThis);

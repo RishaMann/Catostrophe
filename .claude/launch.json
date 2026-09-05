@@ -16,8 +16,8 @@
     {
       "name": "catroom",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["serve", "-l", "8080", "catroom"],
-      "port": 8080
+      "runtimeArgs": ["serve", "catroom"],
+      "autoPort": true
     }
   ]
 }

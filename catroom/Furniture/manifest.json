@@ -1,0 +1,43 @@
+{
+  "curtain": {
+    "new": "curtain/new.png",
+    "afterGag": "curtain/afterGag.png"
+  },
+  "wardrobe": {
+    "new": "wardrobe/new.png"
+  },
+  "bookshelf": {
+    "new": "bookshelf/new.png"
+  },
+  "lamp": {
+    "new": "lamp/new.png"
+  },
+  "aquarium": {
+    "new": "aquarium/new.png"
+  },
+  "ficus": {
+    "new": "ficus/new.png"
+  },
+  "sofa": {
+    "new": "sofa/new.png"
+  },
+  "rug": {
+    "new": "rug/new.png"
+  },
+  "scratch": {
+    "new": "scratch/new.png"
+  },
+  "table": {
+    "new": "table/new.png"
+  },
+  "box": {
+    "new": "box/new.png",
+    "afterGag": "box/afterGag.png"
+  },
+  "pouf": {
+    "new": "pouf/new.png"
+  },
+  "bowls": {
+    "new": "bowls/new.png"
+  }
+}
