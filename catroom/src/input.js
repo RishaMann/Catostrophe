@@ -206,6 +206,46 @@
         }
       }
 
+      // Тап по коробке — переключить состояние (закрыта/распотрошена, см.
+      // Furniture/box в манифесте спрайтов): задел на будущее «состояния
+      // предмета от гэга кота» из room/furnitureSprites.js, пока без самого
+      // гэга — тап и есть временный триггер. Хранится прямо в позиции
+      // (st.floor.box.state), не завязано на furnitureSprites: переключается
+      // всегда, картинка просто пока не показывает разницу в линейном режиме.
+      if (this.mode === 'view' && !this.drag && this.st.floor.box) {
+        const pos = this.st.floor.box;
+        const poly = I.floorPoly(I.floorRect(D.ITEMS.box, pos.x, pos.y));
+        if (inPoly([x, y], poly)) {
+          pos.state = pos.state === 'afterGag' ? 'new' : 'afterGag';
+          this.rebuildItemGfx();
+          return;
+        }
+      }
+
+      // Тап по шторе — открыть/задёрнуть (this.st.placeState[zid], см.
+      // room/shell.js: curtainZid/curtainClosed). Задёрнутая штора и гасит
+      // лунный луч из окна (drawWindowBeam), и (в спрайтовом режиме) закрывает
+      // собой стекло — оба эффекта читают то же состояние, поэтому дёргаем
+      // полный drawLighting(), не только rebuildItemGfx().
+      if (this.mode === 'view' && !this.drag) {
+        const curtainZid = this.curtainZid();
+        if (curtainZid) {
+          // Хват — по фактическому габариту шторы (curtainPoly: весь проём
+          // от пола до потолка), не по тесной decor-зоне WIN_ROD/WIN_FRAME
+          // (та — только под карниз/раму, палец туда не попадёт) — то же
+          // расхождение зоны и видимого силуэта, что чинили для спрайтов
+          // мебели (см. drawFloorItemInto).
+          const poly = this.curtainPoly();
+          if (inPoly([x, y], poly)) {
+            const cur = (this.st.placeState || {})[curtainZid] || 'new';
+            this.st.placeState[curtainZid] = cur === 'afterGag' ? 'new' : 'afterGag';
+            this.drawLighting();
+            this.rebuildItemGfx();
+            return;
+          }
+        }
+      }
+
       // тап по коту — погладить (не «поиграть игрушкой», для этого нужно
       // донести игрушку из «Запасов», см. resolveSupplyDrop)
       const cp = I.P(this.cat.x, this.cat.y);
@@ -336,6 +376,15 @@
     // shellDirty тоже — крепление лампы в drawShell рисуется только пока
     // mode==='inventory', так что вход/выход из инвентаря обязан перерисовать
     // оболочку, не только UI.
-    setMode(m) { this.mode = m; this.drag = null; this.listSwipeStart = null; this.ui = this.panelGeo(); this.uiDirty = true; this.shellDirty = true; }
+    // rebuildItemGfx() тут обязателен, не только shellDirty: вход/выход из
+    // инвентаря меняет не только оболочку (дверь/окно/сетка, см. showLines в
+    // drawShell), но и сами предметы — точки захвата (drawGrabPoint) и
+    // силуэты предметов без спрайта показываются/прячутся тем же условием
+    // (this.mode==='inventory'), а без явного вызова остались бы устаревшими
+    // до следующей случайной перестановки.
+    setMode(m) {
+      this.mode = m; this.drag = null; this.listSwipeStart = null; this.ui = this.panelGeo();
+      this.uiDirty = true; this.shellDirty = true; this.rebuildItemGfx();
+    }
   };
 })(typeof window !== 'undefined' ? window : globalThis);

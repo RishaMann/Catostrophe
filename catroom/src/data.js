@@ -31,7 +31,10 @@
     { id: 'vacuum',    ru: 'Пылесос',     cat: 'low',     s: [.5, .5, .12] },
     { id: 'scales',    ru: 'Весы',        cat: 'low',     s: [.6, .45, .08] },
     { id: 'plaid',     ru: 'Плед',        cat: 'surface' },
-    { id: 'curtain',   ru: 'Штора',       cat: 'wall' },
+    // zoneOnly: штору вешают только на само окно (WIN_ROD — карниз,
+    // WIN_FRAME — рама), не на произвольный кусок стены — единственный
+    // предмет в каталоге, для которого категория 'wall' слишком широка.
+    { id: 'curtain',   ru: 'Штора',       cat: 'wall',    zoneOnly: ['WIN_ROD', 'WIN_FRAME'] },
     { id: 'garland',   ru: 'Гирлянда',    cat: 'wall' },
     { id: 'wshelf',    ru: 'Полка',       cat: 'wall' },
     { id: 'clock',     ru: 'Часы',        cat: 'wall' },

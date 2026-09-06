@@ -39,5 +39,8 @@
   },
   "bowls": {
     "new": "bowls/new.png"
+  },
+  "window": {
+    "new": "window/new.png"
   }
 }

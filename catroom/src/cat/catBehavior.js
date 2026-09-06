@@ -137,12 +137,16 @@
     // (игрушка); на миски — к миске; на любой пол — закопать. Игрушка,
     // брошенная не рядом с котом, не срабатывает вовсе — по просьбе заказчика
     // (в отличие от исходника, где она играла с любой зоны).
+    // Панель «Запасы» после броска НЕ закрывается (раньше каждый бросок сам
+    // звал setMode('view')) — кормить/играть обычно нужно не один раз подряд,
+    // и открывать список заново на каждый кусочек корма неудобно. Она и так
+    // открыта только пока в mode==='supplies' (см. onDown/listOnR), так что
+    // отсюда достаточно просто ничего не менять в this.mode.
     resolveSupplyDrop(x, y) {
       const sup = D.SUPPLIES[this.drag.iid];
       const cp = I.P(this.cat.x, this.cat.y);
       const onCat = this.catOn && Math.hypot(x - cp[0], y - cp[1]) < 46;
       if (onCat) {
-        this.setMode('view');
         if (sup.food) this.feedHand(); else this.playHand();
         return;
       }
@@ -151,11 +155,10 @@
       const bowlsPos = this.st.floor.bowls;
       if (bowlsPos) {
         const poly = I.floorPoly(I.floorRect(D.ITEMS.bowls, bowlsPos.x, bowlsPos.y));
-        if (inPoly([x, y], poly)) { this.setMode('view'); this.feedBowl(); return; }
+        if (inPoly([x, y], poly)) { this.feedBowl(); return; }
       }
       const [tx, ty] = I.unP(x, y);
       if (tx >= 0 && ty >= 0 && tx <= F && ty <= F) {
-        this.setMode('view');
         this.feedFloor(tx, ty);
       }
     },

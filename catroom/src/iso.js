@@ -309,6 +309,10 @@
 
   function reject(z, it) {
     if (z.blocked) return z.blocked;
+    // zoneOnly — точечное исключение для предметов, у которых категория
+    // (по умолчанию — любая зона своей категории) слишком широкая: штора
+    // вешается только у окна (WIN_ROD/WIN_FRAME), не на произвольную стену.
+    if (it.zoneOnly && !it.zoneOnly.includes(z.id)) return 'вешается только у окна';
     if (!ACCEPTS[z.band].includes(it.cat)) return {
       back: 'сюда встаёт мебель у стен', mid: 'здесь только среднее и низкое',
       front: 'ближний край держим низким', wall: 'это область на стене',

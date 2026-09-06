@@ -12,7 +12,7 @@
 
   const I = window.ISO;
   const { SCREEN_W, SCREEN_H } = I;
-  const { DEBUG, CAT_ART_SCALE_BASE, BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, UI_DEPTH, UI_TEXT_DEPTH } = window.RCFG;
+  const { DEBUG, CAT_ART_SCALE_BASE, BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, CEIL_DEPTH, UI_DEPTH, UI_TEXT_DEPTH } = window.RCFG;
   const { TextPool, catFrameNames } = window.GUTIL;
 
   /* ======================================================================== */
@@ -38,13 +38,15 @@
       // Фоновая арт-панорама комнаты — тот же кадр 9:16, что и канвас
       // (819×1456 = 540×960), поэтому ложится на весь канвас без перекоса и
       // совпадает по перспективе со стенами/полом, которые рисует drawShell().
-      // Два варианта на выбор — переключаются в «Настройки» (см. drawSettings
-      // в ui/hud.js, cycleBackground ниже): исходный тёплый вечер и новый
-      // тёмный ночной, под который как раз и расчитана динамическая
-      // подсветка (room/lighting.js) — на тёплом фоне со своим встроенным
-      // светом её почти не видно.
+      // Варианты на выбор — переключаются в «Настройки» (см. drawSettings в
+      // ui/hud.js, cycleBackground ниже): исходный тёплый вечер, тёмный
+      // ночной (под него как раз и рассчитана динамическая подсветка,
+      // room/lighting.js — на тёплом фоне со своим встроенным светом её почти
+      // не видно) и светлый дневной, пустой (Documentation/References/
+      // back.png — без нарисованных окна/двери, только стены и пол).
       this.load.image('roomBg', 'art/room_bg.jpg');
       this.load.image('roomBg2', 'art/room_bg_2.jpg');
+      this.load.image('roomBg3', 'art/room_bg3.jpg');
       // Спрайтовая мебель (второй режим отрисовки, переключается в
       // «Настройки») — манифест перечисляет, у каких id каталога есть
       // вырезанные картинки и в каких состояниях (см. room/furnitureSprites.js
@@ -105,7 +107,15 @@
         place: { ...s.place },
         // floor — свободная расстановка мебели (iid -> {x,y}), отдельно от
         // place (стены/потолок/поверхности, конечный список зон, см. iso.js).
-        floor: Object.fromEntries(Object.entries(s.floor || {}).map(([iid, pos]) => [iid, { ...pos }]))
+        floor: Object.fromEntries(Object.entries(s.floor || {}).map(([iid, pos]) => [iid, { ...pos }])),
+        // placeState — состояние спрайта настенного предмета (zid -> 'new'/
+        // 'afterGag', см. FURN_SPRITES.pickState), отдельной картой: place
+        // хранит просто iid строкой (см. iso.js), а не объект, дописывать
+        // состояние прямо туда означало бы менять формат везде, где place
+        // читают (listSource, input.js — сравнения строк). У floor-мебели
+        // состояние своё, прямо в позиции (st.floor[iid].state) — там формат
+        // и так объект.
+        placeState: {}
       };
       this.params = { ...s.params };
 
@@ -150,11 +160,14 @@
       // UI поверх всего ---
       this.backgrounds = [
         { key: 'roomBg', ru: 'Тёплый вечер' },
-        { key: 'roomBg2', ru: 'Тёмная ночь' }
+        { key: 'roomBg2', ru: 'Тёмная ночь' },
+        { key: 'roomBg3', ru: 'Светлый день' }
       ];
       this.bgIndex = 1; // тёмный ночной — под него сделана динамическая подсветка
-      this.bgImg = this.add.image(0, 0, this.backgrounds[this.bgIndex].key).setOrigin(0, 0)
-        .setDisplaySize(SCREEN_W, SCREEN_H).setDepth(BG_DEPTH);
+      // Размер/положение (layoutBackground) выставляются позже, после
+      // this.rebuild() — им нужен PROJ.OY, а его считает applyProj() внутри
+      // rebuild()/buildScene(), не раньше.
+      this.bgImg = this.add.image(0, 0, this.backgrounds[this.bgIndex].key).setOrigin(0, 0).setDepth(BG_DEPTH);
       this.gShell = this.add.graphics().setDepth(SHELL_DEPTH);
       this.tShell = new TextPool(this, TEXT_DEPTH);
       this.zoneGfx = this.add.graphics().setDepth(ZONE_DEPTH);
@@ -164,6 +177,16 @@
       // кота. Пересобираются вместе с остальной сценой, из rebuild().
       this.gShadow = this.add.graphics().setDepth(SHADOW_DEPTH);
       this.gGlow = this.add.graphics().setDepth(GLOW_DEPTH).setBlendMode(Phaser.BlendModes.ADD);
+      // Пиксельный дождь за стеклом (room/shell.js: rainVisible/updateRain) —
+      // виден только пока стекло реально открыто (окно без шторы или штора в
+      // открытом состоянии, см. rainVisible), поверх статичного дождя,
+      // нарисованного художником прямо на спрайте окна/шторы — отсюда и
+      // высокий depth (CEIL_DEPTH-50, выше любой мебели/стены, но ниже
+      // текста/UI), и маска по фактическому стеклу (winPoly), а не весь
+      // прямоугольник спрайта: дождь не должен вылезать на раму/подоконник.
+      this.gRain = this.add.graphics().setDepth(CEIL_DEPTH - 50).setVisible(false);
+      this.gRainMask = this.make.graphics({ x: 0, y: 0, add: false });
+      this.gRain.setMask(this.gRainMask.createGeometryMask());
       // Кот — спрайт (Image), не векторная фигура: тень/реплика остаются на
       // отдельном Graphics чуть позади него.
       this.gCat = this.add.graphics().setDepth(0);
@@ -193,6 +216,7 @@
       this.tUI = new TextPool(this, UI_TEXT_DEPTH);
 
       this.rebuild();
+      this.layoutBackground();
 
       // Переход в/из полного экрана — асинхронный (сам браузер решает, когда
       // его завершить), иконку ⤢/⤡ обновляем по факту через это событие, не
@@ -217,11 +241,35 @@
 
     // Переключатель фона в «Настройки» (drawSettings/onDown, ui/hud.js и
     // input.js) — просто следующая по кругу текстура на уже существующем
-    // Image, без пересоздания сцены.
+    // Image, без пересоздания сцены. layoutBackground() пересчитывает размер/
+    // положение — у разных картинок разное нативное разрешение.
     cycleBackground() {
       this.bgIndex = (this.bgIndex + 1) % this.backgrounds.length;
       this.bgImg.setTexture(this.backgrounds[this.bgIndex].key);
+      this.layoutBackground();
       this.uiDirty = true;
+    }
+
+    // Фон — по всей ширине канваса БЕЗ отдельного растяжения по высоте
+    // (раньше setDisplaySize(SCREEN_W,SCREEN_H) тянул картинку под ОБЕ
+    // стороны канваса сразу — для панорам 819×1456, т.е. ровно 540×960,
+    // это давало тот же результат, что и просто масштаб по ширине, но для
+    // любого другого нативного разрешения плющило бы перспективу). Вместо
+    // этого — один масштаб (ширина в размер канваса, высота — во столько же
+    // раз, без зума и обрезки) и стыковка по общей точке: дальний нижний
+    // угол комнаты на панораме — по построению этих фонов он горизонтально
+    // по центру кадра и на ANCHOR_Y_FRAC вниз от верха — совмещается с
+    // мировым нулём сцены, I.P(0,0) = (I.OX, I.PROJ.OY), той же точкой, где
+    // сходятся стены на векторной оболочке (room/shell.js:drawShell). Это
+    // общее правило для ЛЮБОГО фона, не подгонка под конкретную картинку —
+    // раз выставлено, для новых панорам ничего пересчитывать не нужно.
+    layoutBackground() {
+      const tex = this.textures.get(this.backgrounds[this.bgIndex].key).getSourceImage();
+      const scale = SCREEN_W / tex.width;
+      const dispW = SCREEN_W, dispH = tex.height * scale;
+      const ANCHOR_Y_FRAC = 0.375;
+      this.bgImg.setDisplaySize(dispW, dispH)
+        .setPosition(I.OX - 0.5 * dispW, I.PROJ.OY - ANCHOR_Y_FRAC * dispH);
     }
 
     update(time, delta) {
@@ -236,6 +284,7 @@
       if (this.shellDirty) { this.drawShell(); this.shellDirty = false; }
       this.drawZoneOverlay();
       this.updateCatVisual();
+      this.updateRain(time);
       if (this.uiDirty === undefined) this.uiDirty = true;
       // mode==='characters' перерисовывается каждый кадр не из-за uiDirty —
       // превью крутится по времени (catPreviewFrameName), не по событию.

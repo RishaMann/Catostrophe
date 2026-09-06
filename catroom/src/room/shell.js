@@ -96,6 +96,60 @@
         : [I.P(w0, 0, z0), I.P(w1, 0, z0), I.P(w1, 0, z1), I.P(w0, 0, z1)];
     },
 
+    // Какая из WIN_ROD/WIN_FRAME сейчас держит штору — обе ссылаются на одно
+    // и то же окно (curtainPoly не смотрит на zid вовсе), штора живёт максимум
+    // в одной из них разом (zoneOnly в data.js это и обеспечивает).
+    curtainZid() {
+      return ['WIN_ROD', 'WIN_FRAME'].find(zid => this.st.place[zid] === 'curtain') || null;
+    },
+    // Штора закрыта — тап по ней переключает new/afterGag (см. input.js),
+    // 'afterGag' здесь и означает «задёрнута», не «после гэга кота» в
+    // буквальном смысле (та же пара состояний, что у box, но для шторы это
+    // просто открыто/закрыто — своих гэгов у неё пока нет). Без шторы вовсе
+    // окно всегда открыто.
+    curtainClosed() {
+      const zid = this.curtainZid();
+      if (!zid) return false;
+      return ((this.st.placeState || {})[zid] || 'new') === 'afterGag';
+    },
+
+    // Пиксельный дождь виден только в спрайтовом режиме (это оформление
+    // конкретно под спрайтовый арт окна/шторы, см. Furniture/window,
+    // Furniture/curtain) и только пока стекло реально открыто — та же
+    // проверка, что блокирует лунный луч (drawWindowBeam, room/lighting.js):
+    // задёрнутая штора должна и выглядеть, и вести себя как «окна больше не
+    // видно».
+    rainVisible() {
+      return !!this.furnitureSprites && !this.curtainClosed();
+    },
+    // Обновляется каждый кадр (game.js: update()), не из rebuild() — сам
+    // дождь должен идти непрерывно, а не перерисовываться только по
+    // событию постановки предмета. Маска — geometry mask по фактическому
+    // стеклу (winPoly, НЕ curtainPoly — та шире, вся штора целиком, дождь же
+    // должен остаться в пределах именно стекла).
+    updateRain(time) {
+      const visible = this.rainVisible();
+      this.gRain.setVisible(visible);
+      if (!visible) return;
+      const pts = this.winPoly();
+      this.gRainMask.clear();
+      this.gRainMask.fillStyle(0xffffff, 1);
+      this.gRainMask.fillPoints(pts.map(p => ({ x: p[0], y: p[1] })), true);
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      const w = x1 - x0, h = y1 - y0;
+      const g = this.gRain;
+      g.clear();
+      g.lineStyle(1.3, 0xBFD9F2, 0.5);
+      const N = 16;
+      for (let i = 0; i < N; i++) {
+        const speed = 70 + (i % 5) * 22; // разный темп капель — не «строем»
+        const x = x0 + ((i * 53.7) % Math.max(1, w));
+        const y = y0 - 12 + ((time * speed * 0.001 + i * 61) % (h + 24));
+        g.lineBetween(x, y, x, y + 11); // строго вертикально, без сноса по x
+      }
+    },
+
     // Точка крепления лампы/люстры на потолке — тот же квадрат-подсказка,
     // что уже рисовался в drawZoneOverlay (амбер-рамка вокруг this.st.light),
     // теперь ещё и хватается/двигается, как дверь/окно.
@@ -192,37 +246,50 @@
       g.clear(); this.tShell.begin();
       const poly = (pts, fill, fa, stroke, sw, close) => this.polyOn(g, pts, fill, fa, stroke, sw, close);
 
-      // --- пол и две стены (без верхней линии — см. wallFace) ---
-      // Серой заливки на стенах больше нет — вместо неё сквозь контур видна
-      // фоновая панорама (BG_DEPTH, под gShell). Обводка граней и пол остаются.
-      poly([I.P(0, 0), I.P(F, 0), I.P(F, F), I.P(0, F)], COL.chalk, 0.045, COL.chalk, 1.2);
-      this.wallFace(g, [I.P(0, 0), I.P(F, 0), I.P(F, 0, WALL), I.P(0, 0, WALL)], 0);
-      this.wallFace(g, [I.P(0, 0), I.P(0, F), I.P(0, F, WALL), I.P(0, 0, WALL)], 0);
+      // В спрайтовом режиме (this.furnitureSprites) фон уже сам показывает
+      // пол/стены/окно как картинку — контур пола, рёбра стен, сетка и
+      // подписи-подсказки «дверь»/«окно» поверх нужны только пока открыт
+      // инвентарь (это разметка для перестановки, не часть отделанной
+      // комнаты). В линейном режиме без них вообще нечего смотреть — там
+      // они рисуются всегда, как раньше.
+      const showLines = !this.furnitureSprites || this.mode === 'inventory';
+      let c;
 
-      g.lineStyle(1, COL.chalk, 0.07);
-      for (let i = 1; i < F; i++) {
-        let a = I.P(i, 0), b = I.P(i, F); g.lineBetween(a[0], a[1], b[0], b[1]);
-        a = I.P(0, i); b = I.P(F, i); g.lineBetween(a[0], a[1], b[0], b[1]);
+      if (showLines) {
+        // --- пол и две стены (без верхней линии — см. wallFace) ---
+        // Серой заливки на стенах больше нет — вместо неё сквозь контур видна
+        // фоновая панорама (BG_DEPTH, под gShell). Обводка граней и пол остаются.
+        poly([I.P(0, 0), I.P(F, 0), I.P(F, F), I.P(0, F)], COL.chalk, 0.045, COL.chalk, 1.2);
+        this.wallFace(g, [I.P(0, 0), I.P(F, 0), I.P(F, 0, WALL), I.P(0, 0, WALL)], 0);
+        this.wallFace(g, [I.P(0, 0), I.P(0, F), I.P(0, F, WALL), I.P(0, 0, WALL)], 0);
+
+        g.lineStyle(1, COL.chalk, 0.07);
+        for (let i = 1; i < F; i++) {
+          let a = I.P(i, 0), b = I.P(i, F); g.lineBetween(a[0], a[1], b[0], b[1]);
+          a = I.P(0, i); b = I.P(F, i); g.lineBetween(a[0], a[1], b[0], b[1]);
+        }
+        // Бортики ближних рёбер (низкий декоративный "поребрик" вдоль открытых
+        // передних краёв пола) убраны — та же жалоба, что и на верх стены:
+        // лишняя линия поверх сцены, предметам ближнего плана мешала.
+
+        // --- проём двери и окна (геометрия — doorPoly()/winPoly(), общая с
+        // хит-тестом hitDoor()/hitWindow(), чтобы клик и рисунок не разошлись) ---
+        const dp = this.doorPoly();
+        poly(dp, 0x000000, 0.30, COL.chalk, 1.1);
+        c = I.centroid(dp);
+        this.tShell.put(c[0], c[1], 'дверь', 10, '#E8A33Dcc', 'center');
+
+        const wp = this.winPoly();
+        poly(wp, 0x7896BE, 0.22, COL.chalk, 1.1);
+        c = I.centroid(wp);
+        this.tShell.put(c[0], c[1], 'окно', 10, '#E8A33Dcc', 'center');
       }
-      // Бортики ближних рёбер (низкий декоративный "поребрик" вдоль открытых
-      // передних краёв пола) убраны — та же жалоба, что и на верх стены:
-      // лишняя линия поверх сцены, предметам ближнего плана мешала.
-
-      // --- проём двери и окна (геометрия — doorPoly()/winPoly(), общая с
-      // хит-тестом hitDoor()/hitWindow(), чтобы клик и рисунок не разошлись) ---
-      const dp = this.doorPoly();
-      poly(dp, 0x000000, 0.30, COL.chalk, 1.1);
-      let c = I.centroid(dp);
-      this.tShell.put(c[0], c[1], 'дверь', 10, '#E8A33Dcc', 'center');
-
-      const wp = this.winPoly();
-      poly(wp, 0x7896BE, 0.22, COL.chalk, 1.1);
-      c = I.centroid(wp);
-      this.tShell.put(c[0], c[1], 'окно', 10, '#E8A33Dcc', 'center');
 
       // --- выключатель верхнего света — обычный бытовой прибор, виден и
       // кликабелен в любом режиме (не только при открытом инвентаре, в
-      // отличие от крепления лампы ниже — то средство редактирования). ---
+      // отличие от крепления лампы ниже — то средство редактирования), и в
+      // ЛЮБОМ режиме отрисовки — это не разметка для перестановки, а
+      // настоящий прибор, которым играют и без инвентаря. ---
       const sp = this.switchPoly();
       poly(sp, COL.chalk, 0.14, COL.chalk, 1);
       c = I.centroid(sp);

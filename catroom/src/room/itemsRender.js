@@ -7,7 +7,7 @@
 
   const D = root.GAMEDATA, I = root.ISO;
   const { WALL } = I;
-  const { COL, FONT, TEXT_DEPTH, CEIL_DEPTH, SHADOW_DEPTH } = root.RCFG;
+  const { COL, FONT, TEXT_DEPTH, CEIL_DEPTH, SHADOW_DEPTH, SHELL_DEPTH } = root.RCFG;
   const FS = root.FURN_SPRITES;
 
   // Плоские напольные покрытия (ковёр и т.п., высота < 0.2 — тот же порог,
@@ -120,6 +120,44 @@
         entry.g.setDepth(floorRenderDepth(D.ITEMS[iid], pos) + 0.001);
         entry.t = this.drawFloorItemInto(entry.g, entry.t, iid, pos);
       }
+      this.updateWindowSprite();
+    },
+
+    // Голое окно (Furniture/window/new.png) — не предмет каталога, нельзя
+    // взять или переставить, оно часть комнаты и всегда «на месте окна»;
+    // видно только пока туда не повесили штору (curtainZid, room/shell.js) —
+    // как только штора появилась, её собственный спрайт уже показывает окно
+    // (см. curtain/new.png — она снята вместе с ним), рисовать голое окно
+    // под ней незачем и оно бы всё равно не было видно (штора непрозрачна).
+    updateWindowSprite() {
+      const show = this.furnitureSprites && FS && FS.has('window') && !this.curtainZid();
+      if (!show) { if (this.windowImg) this.windowImg.setVisible(false); return; }
+      const key = FS.textureKey('window', FS.pickState('window', 'new'));
+      if (!this.windowImg) this.windowImg = this.add.image(0, 0, key).setOrigin(0.5, 0.5);
+      const src = this.textures.get(key).getSourceImage();
+      const pts = this.curtainPoly(), c = I.centroid(pts);
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+      const scale = Math.min(bw / src.width, bh / src.height);
+      this.windowImg.setTexture(key).setVisible(true).setScale(scale)
+        .setPosition(c[0], c[1]).setDepth(SHELL_DEPTH + 0.1)
+        .setFlipX(this.st.win.side === 'frontRight');
+    },
+
+    // Точка захвата — маленький кружок с крестиком, куда именно тыкать,
+    // чтобы взять предмет в руку и переставить (см. вызовы в
+    // drawFloorItemInto/drawWallItemInto/drawCeilInto). Нужна в первую
+    // очередь спрайтам: у вырезанной картинки неровный силуэт по альфе, и
+    // без явной точки непонятно, где именно её реальный (прямоугольный)
+    // hit-box — см. rejectFloor/floorPoly в iso.js, они ничего общего с
+    // силуэтом картинки не имеют. Рисуется только пока открыт инвентарь —
+    // это подсказка для перестановки, не постоянная деталь сцены.
+    drawGrabPoint(g, x, y) {
+      g.fillStyle(COL.amber, 0.85); g.fillCircle(x, y, 5);
+      g.lineStyle(1.3, COL.amber, 1); g.strokeCircle(x, y, 5);
+      g.lineStyle(1.3, COL.chalk, 0.9);
+      g.lineBetween(x - 2.2, y, x + 2.2, y);
+      g.lineBetween(x, y - 2.2, x, y + 2.2);
     },
 
     setLabel(text, x, y, str) {
@@ -139,7 +177,8 @@
       const poly = (pts, fill, fa, stroke, sw, close) => this.polyOn(g, pts, fill, fa, stroke, sw, close);
       const pts = I.zonePoly(z, F), c = I.centroid(pts);
       const entry = this.itemGfx.get(zid);
-      const state = this.furnitureSprites && FS && FS.pickState(iid, 'new');
+      const wanted = (this.st.placeState || {})[zid];
+      const state = this.furnitureSprites && FS && FS.pickState(iid, wanted);
       if (state) {
         const key = FS.textureKey(iid, state);
         if (!entry.img) entry.img = this.add.image(0, 0, key).setOrigin(0.5, 0.5);
@@ -169,11 +208,17 @@
         // зеркало, что и у floor-мебели при перестановке, картинка одна на
         // обе стороны.
         entry.img.setFlipX(isCurtain && this.st.win.side === 'frontRight');
-      } else {
+      } else if (!this.furnitureSprites || this.mode === 'inventory') {
         if (entry.img) entry.img.setVisible(false);
         const ins = pts.map(p => [c[0] + (p[0] - c[0]) * 0.78, c[1] + (p[1] - c[1]) * 0.78]);
         poly(ins, COL.chalk, 0.16, COL.chalk, 1.2);
+      } else if (entry.img) {
+        entry.img.setVisible(false);
       }
+      // Точка захвата — только пока открыт инвентарь (см. drawGrabPoint):
+      // в спрайтовом режиме вне инвентаря вся разметка, включая её, скрыта —
+      // это подсказка для перестановки, не часть отделанной комнаты.
+      if (this.mode === 'inventory') this.drawGrabPoint(g, c[0], c[1]);
       return this.showLabels ? this.setLabel(text, c[0], c[1] + 3, it.ru) : this.hideLabel(text);
     },
 
@@ -245,7 +290,14 @@
       } else if (entry.img) {
         entry.img.setVisible(false);
       }
-      if (!state) {
+      // Процедурный силуэт — только пока нет спрайта ИЛИ пока открыт
+      // инвентарь: в спрайтовом режиме вне инвентаря комната должна
+      // выглядеть отделанной, а не наполовину blockout'ом из линий поверх
+      // картинок (см. showLines в room/shell.js — тот же принцип). У
+      // предметов без спрайта совсем это единственная видимая форма — она
+      // просто скрывается вместе с остальной разметкой, когда инвентарь
+      // закрыт (тот же trade-off, что и у стенных предметов без картинки).
+      if (!state && (!this.furnitureSprites || this.mode === 'inventory')) {
         const shapes = root.ITEM_SHAPES;
         if (shapes && shapes.has(iid)) {
           shapes.draw(iid, { g, poly, cx, cy, w, d, h, it, I, COL });
@@ -262,11 +314,22 @@
       // Торшер включён/выключен тапом по подставке (input.js) — тёплая точка
       // у абажура, поверх силуэта ИЛИ поверх спрайта одинаково (g рисуется с
       // depth чуть выше, см. rebuildItemGfx) — та же условность, что и у
-      // потолочного светильника (drawCeilInto).
+      // потолочного светильника (drawCeilInto). Настоящий прибор, не
+      // разметка — виден в любом режиме, как выключатель у двери.
       if (iid === 'lamp') {
         const tip = I.P(cx, cy, h * 0.92);
         g.fillStyle(this.lampOn ? COL.amber : COL.chalk, this.lampOn ? 0.8 : 0.25);
         g.fillCircle(tip[0], tip[1], 3.5);
+      }
+      // Точка захвата — см. drawWallItemInto/drawGrabPoint; на переднем
+      // (обращённом в комнату) крае footprint'а, том же, что и опора
+      // спрайта, — не в геометрическом центре, чтобы не тонуть внутри
+      // высокой мебели на экране.
+      if (this.mode === 'inventory') {
+        const rot = cx <= cy, depFull = rot ? w : d;
+        const front = rot ? [cx + depFull / 2, cy] : [cx, cy + depFull / 2];
+        const gp = I.P(front[0], front[1], h * 0.5);
+        this.drawGrabPoint(g, gp[0], gp[1]);
       }
       if (this.showLabels) {
         const t = I.P(cx, cy, h);
@@ -287,6 +350,7 @@
       g.lineStyle(1.2, col, lineA); g.lineBetween(t[0], t[1], b[0], b[1]);
       g.fillStyle(col, fillA); g.fillCircle(b[0], b[1] + 5, iid === 'chandelier' ? 10 : 5);
       g.lineStyle(1.2, col, lineA); g.strokeCircle(b[0], b[1] + 5, iid === 'chandelier' ? 10 : 5);
+      if (this.mode === 'inventory') this.drawGrabPoint(g, b[0], b[1] + 5);
       return this.showLabels ? this.setLabel(text, b[0], b[1] + 28, D.ITEMS[iid].ru) : this.hideLabel(text);
     }
   };

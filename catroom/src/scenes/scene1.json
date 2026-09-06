@@ -5,7 +5,7 @@
   "light": { "x": 2.7, "y": 2.7 },
   "cat": { "x": 3, "y": 5.5 },
   "place": {
-    "ON_SOFA": "plaid", "WIN_ROD": "curtain", "WIN_FRAME": "garland", "WL_A": "wshelf",
+    "ON_SOFA": "plaid", "WIN_FRAME": "garland", "WL_A": "wshelf",
     "CEIL": "bulb"
   },
   "floor": {
