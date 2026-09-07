@@ -6,23 +6,40 @@
   'use strict';
 
   const D = root.GAMEDATA, I = root.ISO;
-  const { WALL } = I;
+  const { WALL, DOOR_W } = I;
   const { COL, FONT, TEXT_DEPTH, CEIL_DEPTH, SHADOW_DEPTH, SHELL_DEPTH } = root.RCFG;
   const FS = root.FURN_SPRITES;
 
-  // Плоские напольные покрытия (ковёр и т.п., высота < 0.2 — тот же порог,
-  // что и у навигационных «solid»-препятствий в iso.js) лежат НА полу, а не
-  // «среди» мебели: обычный I.floorDepth(pos) по центру их большого
-  // footprint'а иначе то и дело перекрывал бы стоящую на них мебель (порядок
-  // по x+y у центра ковра ничего не говорит о том, что физически ближе к
-  // камере — сам ковёр всегда должен быть ПОД любым другим предметом).
-  // Рисуем их сразу над полом/тенью, ниже абсолютно любой настоящей мебели и
-  // кота (у которых floorDepth/cat.x+cat.y всегда ≥ 0). +pos*1e-4 — не для
-  // сортировки относительно мебели (она и так всегда «выше»), а только чтобы
-  // несколько плоских покрытий, если их когда-нибудь станет больше одного и
-  // они пересекутся, сортировались стабильно и детерминированно между собой.
+  // Какие floor-предметы уже переведены на room/assetGeometry.js (авто по
+  // альфа-контенту + ручная правка через AssetGeometryEditor) — техническое
+  // ограничение ЭТАПА внедрения (см. переписку с продюсером/аудитором), не
+  // самого модуля: AssetGeometry сам по себе общий (entityId+state, никакого
+  // «if box» внутри него), просто пока подключён не ко всем 14 предметам —
+  // остальные держатся на прежней формуле (масштаб по src.width/height), пока
+  // не появится причина (кривые PNG у конкретного предмета) её тоже завести
+  // сюда. Список общий с ui/hud.js (drawGhost) — см. AssetGeometry.
+  // FURNITURE_ITEMS: предмет в руке и предмет на полу обязаны совпадать по
+  // геометрии, иначе в момент захвата картинка «съезжает» от жёлтой точки.
+  const ASSET_GEOMETRY_ITEMS = root.AssetGeometry.FURNITURE_ITEMS;
+
+  // Напольные покрытия (сейчас — ковёр, it.floorCovering в data.js) лежат НА
+  // полу, а не «среди» мебели: обычный I.floorDepth(pos) по центру их
+  // большого footprint'а иначе то и дело перекрывал бы стоящую на них мебель
+  // (порядок по x+y у центра ковра ничего не говорит о том, что физически
+  // ближе к камере — сам ковёр всегда должен быть ПОД любым другим
+  // предметом). Раньше это решалось по высоте (s[2] < 0.2) — тот же порог,
+  // что у навигационных «solid»-препятствий в iso.js, — но под него попадали
+  // и обычные низкие предметы (миски, весы, пылесос), которые никакого
+  // отношения к «лежит на полу вместо мебели» не имеют и должны
+  // сортироваться как всегда; явный флаг точнее и не завязан на числовой
+  // порог, придуманный для другой задачи (навигация). underCovering —
+  // симметричный флаг на будущее (предмет ПОД ковром по сюжету) — ещё ниже.
+  // +pos*1e-4 — не для сортировки относительно мебели (она и так всегда
+  // «выше»), а только чтобы несколько покрытий, если их станет больше
+  // одного и они пересекутся, сортировались стабильно между собой.
   function floorRenderDepth(it, pos) {
-    if (it && it.s && it.s[2] < 0.2) return SHADOW_DEPTH + 0.05 + (pos.x + pos.y) * 0.0001;
+    if (it && it.underCovering) return SHADOW_DEPTH - 0.05 + (pos.x + pos.y) * 0.0001;
+    if (it && it.floorCovering) return SHADOW_DEPTH + 0.05 + (pos.x + pos.y) * 0.0001;
     return I.floorDepth(pos);
   }
 
@@ -121,6 +138,7 @@
         entry.t = this.drawFloorItemInto(entry.g, entry.t, iid, pos);
       }
       this.updateWindowSprite();
+      this.updateDoorSprite();
     },
 
     // Голое окно (Furniture/window/new.png) — не предмет каталога, нельзя
@@ -132,16 +150,60 @@
     updateWindowSprite() {
       const show = this.furnitureSprites && FS && FS.has('window') && !this.curtainZid();
       if (!show) { if (this.windowImg) this.windowImg.setVisible(false); return; }
-      const key = FS.textureKey('window', FS.pickState('window', 'new'));
+      const state = FS.pickState('window', 'new');
+      const key = FS.textureKey('window', state);
       if (!this.windowImg) this.windowImg = this.add.image(0, 0, key).setOrigin(0.5, 0.5);
       const src = this.textures.get(key).getSourceImage();
       const pts = this.curtainPoly(), c = I.centroid(pts);
       const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
       const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
-      const scale = Math.min(bw / src.width, bh / src.height);
+      const AG = root.AssetGeometry;
+      const auto = AG.autoFurniture(key, src);
+      const override = AG.effectiveOverride('furn:window', state);
+      const geo = AG.resolve(auto, override);
+      const contentW = geo.contentW || src.width, contentH = geo.contentH || src.height;
+      const scale = Math.min(bw / contentW, bh / contentH) * geo.scaleMul;
+      this.windowImg.setOrigin(geo.originX, geo.originY);
       this.windowImg.setTexture(key).setVisible(true).setScale(scale)
-        .setPosition(c[0], c[1]).setDepth(SHELL_DEPTH + 0.1)
+        .setPosition(c[0] + geo.offsetX, c[1] + geo.offsetY).setDepth(SHELL_DEPTH + 0.1 + geo.sortBias)
         .setFlipX(this.st.win.side === 'frontRight');
+    },
+
+    // Дверь (Furniture/door/{left,frontLeft}.png) — как окно, часть комнаты,
+    // не предмет каталога (нельзя взять/переставить). Два кроя картинки —
+    // не смена состояния одного и того же вида, а РАЗНЫЕ фасады: дверь на
+    // левой стене (side==='left', плоскость x=0) и та же дверь, уехавшая за
+    // угол на открытый передний край (side==='frontLeft', плоскость y=F, см.
+    // dragOpening в room/shell.js) — это разные грани комнаты, зеркалом
+    // одну в другую не превратить (та же причина, что у 8-directional
+    // спрайтов кота). Ключ манифеста — 'left'/'frontLeft' совпадает с
+    // st.door.side один в один, отдельного маппинга не нужно.
+    updateDoorSprite() {
+      const show = this.furnitureSprites && FS && FS.has('door');
+      if (!show) { if (this.doorImg) this.doorImg.setVisible(false); return; }
+      const state = FS.pickState('door', this.st.door.side);
+      if (!state) { if (this.doorImg) this.doorImg.setVisible(false); return; }
+      const key = FS.textureKey('door', state);
+      if (!this.doorImg) this.doorImg = this.add.image(0, 0, key).setOrigin(0.5, 1);
+      const src = this.textures.get(key).getSourceImage();
+      const F = I.PROJ.F, d0 = this.st.door.pos, d1 = d0 + DOOR_W, mid = (d0 + d1) / 2;
+      // Опора — низ проёма (порог/пол), не центр decor-квада doorPoly(): у
+      // двери коврик лежит на полу, как и у floor-мебели, а не «висит»
+      // посередине высоты проёма.
+      const floorPt = this.st.door.side === 'left' ? I.P(0, mid, 0) : I.P(mid, F, 0);
+      const pts = this.doorPoly();
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+      const AG = root.AssetGeometry;
+      const auto = AG.autoFurniture(key, src);
+      const override = AG.effectiveOverride('furn:door', state);
+      const geo = AG.resolve(auto, override);
+      const contentW = geo.contentW || src.width, contentH = geo.contentH || src.height;
+      const scale = Math.min(bw / contentW, bh / contentH) * geo.scaleMul;
+      this.doorImg.setOrigin(geo.originX, geo.originY);
+      this.doorImg.setTexture(key).setVisible(true).setScale(scale)
+        .setPosition(floorPt[0] + geo.offsetX, floorPt[1] + geo.offsetY)
+        .setDepth(SHELL_DEPTH + 0.1 + geo.sortBias);
     },
 
     // Точка захвата — маленький кружок с крестиком, куда именно тыкать,
@@ -172,6 +234,19 @@
     // прямоугольник (геометрия по-прежнему из dynamicZones/zmap), либо —
     // если включён спрайтовый режим и для предмета есть вырезанная картинка
     // (сейчас только curtain, см. Furniture/manifest.json) — сама картинка.
+    // Точка на полу у подножия стены, вдоль которой висит настенный
+    // предмет (та же along-wall координата z.r, только z=0 вместо
+    // диапазона высот) — используется и для «упавшего» портрета
+    // (drawWallItemInto), и для его же хит-теста в input.js: одна формула,
+    // чтобы место тапа и место рисунка не разошлись.
+    wallFloorAnchor(zid) {
+      const z = this.zmap[zid], F = I.PROJ.F;
+      const mid = (z.r[0] + z.r[2]) / 2;
+      if (z.wall === 'right') return I.P(mid, 0, 0);
+      if (z.wall === 'frontRight') return I.P(F, mid, 0);
+      return I.P(0, mid, 0); // 'left' — тоже дефолт для LF_*/OVERDOOR (band:'back', wall не задан)
+    },
+
     drawWallItemInto(g, text, zid, iid) {
       const z = this.zmap[zid], it = D.ITEMS[iid], F = I.PROJ.F;
       const poly = (pts, fill, fa, stroke, sw, close) => this.polyOn(g, pts, fill, fa, stroke, sw, close);
@@ -179,6 +254,14 @@
       const entry = this.itemGfx.get(zid);
       const wanted = (this.st.placeState || {})[zid];
       const state = this.furnitureSprites && FS && FS.pickState(iid, wanted);
+      // Портрет тапом «падает» вдоль стены до пола и остаётся наискось (см.
+      // input.js) — это НЕ смена картинки (в манифесте одна-единственная
+      // 'new', pickState тихо откатится на неё и для 'fallen'), а смена
+      // ТРАНСФОРМА поверх той же текстуры: другая точка (пол у стены, не
+      // середина decor-зоны), другой origin (низ рамки, а не альфа-anchor)
+      // и поворот. Мгновенно, без анимации падения — тот же уровень
+      // проработки, что у гэга коробки/шторы (тоже мгновенный toggle).
+      const fallen = iid === 'portrait' && wanted === 'fallen';
       if (state) {
         const key = FS.textureKey(iid, state);
         if (!entry.img) entry.img = this.add.image(0, 0, key).setOrigin(0.5, 0.5);
@@ -200,14 +283,38 @@
         const fitC = isCurtain ? I.centroid(fitPts) : c;
         const xs = fitPts.map(p => p[0]), ys = fitPts.map(p => p[1]);
         const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
-        const scale = Math.min(bw / src.width, bh / src.height) * (isCurtain ? 1 : 0.96);
-        entry.img.setTexture(key).setVisible(true).setScale(scale)
-          .setPosition(fitC[0], fitC[1]).setDepth(I.depth(this.zmap, zid));
-        // Разворот при переезде окна/шторы на примыкающий передний край
-        // (win.side==='frontRight', см. dragOpening в shell.js) — то же
-        // зеркало, что и у floor-мебели при перестановке, картинка одна на
-        // обе стороны.
-        entry.img.setFlipX(isCurtain && this.st.win.side === 'frontRight');
+        // room/assetGeometry.js — тот же честный anchor/scale по альфа-
+        // контенту картинки, что у floor-мебели (drawFloorItemInto) и
+        // призрака (ui/hud.js drawGhost), не «квадратный fit по всему PNG»:
+        // у стеновых предметов ровно та же уязвимость при нескольких
+        // состояниях (штора open/closed — разный кроп, разный паддинг).
+        const AG = root.AssetGeometry;
+        const auto = AG.autoFurniture(key, src);
+        const override = AG.effectiveOverride('furn:' + iid, state);
+        const geo = AG.resolve(auto, override);
+        const contentW = geo.contentW || src.width, contentH = geo.contentH || src.height;
+        const baseScale = Math.min(bw / contentW, bh / contentH) * (isCurtain ? 1 : 0.96);
+        if (fallen) {
+          const fp = this.wallFloorAnchor(zid);
+          entry.img.setOrigin(0.5, 1);
+          entry.img.setTexture(key).setVisible(true)
+            .setScale(baseScale * geo.scaleMul)
+            .setPosition(fp[0], fp[1])
+            .setAngle(z.wall === 'right' ? -65 : 65)
+            .setDepth(I.depth(this.zmap, zid) + 0.5)
+            .setFlipX(false);
+        } else {
+          entry.img.setAngle(0);
+          entry.img.setOrigin(geo.originX, geo.originY);
+          entry.img.setTexture(key).setVisible(true).setScale(baseScale * geo.scaleMul)
+            .setPosition(fitC[0] + geo.offsetX, fitC[1] + geo.offsetY)
+            .setDepth(I.depth(this.zmap, zid) + geo.sortBias)
+            // Разворот при переезде окна/шторы на примыкающий передний край
+            // (win.side==='frontRight', см. dragOpening в shell.js) — то же
+            // зеркало, что и у floor-мебели при перестановке, картинка одна
+            // на обе стороны.
+            .setFlipX(isCurtain && this.st.win.side === 'frontRight');
+        }
       } else if (!this.furnitureSprites || this.mode === 'inventory') {
         if (entry.img) entry.img.setVisible(false);
         const ins = pts.map(p => [c[0] + (p[0] - c[0]) * 0.78, c[1] + (p[1] - c[1]) * 0.78]);
@@ -217,9 +324,12 @@
       }
       // Точка захвата — только пока открыт инвентарь (см. drawGrabPoint):
       // в спрайтовом режиме вне инвентаря вся разметка, включая её, скрыта —
-      // это подсказка для перестановки, не часть отделанной комнаты.
-      if (this.mode === 'inventory') this.drawGrabPoint(g, c[0], c[1]);
-      return this.showLabels ? this.setLabel(text, c[0], c[1] + 3, it.ru) : this.hideLabel(text);
+      // это подсказка для перестановки, не часть отделанной комнаты. У
+      // упавшего портрета — на полу у стены, там же, где хват для
+      // «переставить», а не в decor-зоне на стене (там уже ничего нет).
+      const grabAt = fallen ? this.wallFloorAnchor(zid) : [c[0], c[1]];
+      if (this.mode === 'inventory') this.drawGrabPoint(g, grabAt[0], grabAt[1]);
+      return this.showLabels ? this.setLabel(text, grabAt[0], grabAt[1] + 3, it.ru) : this.hideLabel(text);
     },
 
     // Floor-мебель — свободная расстановка: позиция и ориентация прямо из
@@ -260,9 +370,6 @@
         // ней (тянем и w, и h ОДНИМ scale, чтобы не исказить перспективу
         // самого рисунка). min() — картинка вписывается в габарит, не
         // растягивается ни по одной оси сверх него.
-        const targetW = (w + d) * I.PROJ.TW;
-        const targetH = (w + d) * I.PROJ.TH + h * I.PROJ.ZH;
-        const scale = Math.min(targetW / src.width, targetH / src.height);
         // Точка опоры — не геометрический центр footprint'а (cx,cy), а
         // середина его ПЕРЕДНЕГО (обращённого в комнату) края: референсная
         // картинка снята с фасада — низ кадра это перед предмета, не его
@@ -274,12 +381,66 @@
         // неё, и тогда «глубина» (расстояние от стены до фасада) — это w). Без
         // этого сдвига предмет у стены рисуется наполовину «в стене»: пол
         // видимого силуэта против собственного footprint'а уходит назад, за
-        // заднюю грань, вместо того чтобы остаться перед ней.
+        // заднюю грань, вместо того чтобы остаться перед ней. Это ЛОГИЧЕСКАЯ
+        // точка (из footprint'а, данные), не зависит от картинки — общая для
+        // обеих веток ниже.
         const rot = cx <= cy, depFull = rot ? w : d;
         const front = rot ? [cx + depFull / 2, cy] : [cx, cy + depFull / 2];
-        const anchor = I.P(front[0], front[1], 0);
-        entry.img.setTexture(key).setVisible(true).setScale(scale)
-          .setPosition(anchor[0], anchor[1]).setDepth(floorRenderDepth(it, pos));
+        // Предметы на AssetGeometry (сейчас — box) якорятся на ЦЕНТР
+        // footprint'а (cx,cy), не на «передний край»: itemShapes.js рисует
+        // процедурный силуэт как раз вокруг центра (см. box() там же —
+        // faceBlock от cx±w/2, cy±d/2), и без этого коробка в спрайтовом
+        // режиме и коробка из линий стояли на разных мировых точках —
+        // предмет визуально «съезжал» при переключении режима отрисовки,
+        // хотя логическая позиция (st.floor.box) не менялась вовсе.
+        // «Передний край» остаётся дефолтом для остальных предметов —
+        // референсные фото сняты с фасада (см. комментарий выше), там
+        // смещение осознанное, не баг.
+        const anchorPoint = ASSET_GEOMETRY_ITEMS.has(iid) ? [cx, cy] : front;
+        const anchor = I.P(anchorPoint[0], anchorPoint[1], 0);
+        if (ASSET_GEOMETRY_ITEMS.has(iid)) {
+          // room/assetGeometry.js: масштаб — по альфа-контенту картинки, не
+          // по полному canvas (padding между состояниями одного предмета не
+          // обязан совпадать, см. аудит: box/new.png 169×175 vs
+          // box/afterGag.png 217×186 — разные пропорции), origin — тоже по
+          // альфа-контенту (низ силуэта), если нет ручной правки. Логическая
+          // anchor-точка (anchorPoint, выше) не меняется НИКОГДА — геометрия
+          // влияет только на то, куда на спрайте она попадёт, и на мелкий offset.
+          const AG = root.AssetGeometry;
+          const auto = AG.autoFurniture(key, src);
+          const override = AG.effectiveOverride('furn:' + iid, state);
+          const geo = AG.resolve(auto, override);
+          const contentW = geo.contentW || src.width, contentH = geo.contentH || src.height;
+          const targetW = (w + d) * I.PROJ.TW, targetH = (w + d) * I.PROJ.TH + h * I.PROJ.ZH;
+          // scaleMul — ручная поправка размера (тянуть за угол в
+          // AssetGeometryEditor) поверх автоматического fit-масштаба, не
+          // вместо него.
+          const scale = Math.min(targetW / contentW, targetH / contentH) * geo.scaleMul;
+          entry.img.setOrigin(geo.originX, geo.originY);
+          entry.img.setTexture(key).setVisible(true).setScale(scale)
+            .setPosition(anchor[0] + geo.offsetX, anchor[1] + geo.offsetY)
+            .setDepth(floorRenderDepth(it, pos) + geo.sortBias);
+        } else {
+          // Габарит силуэта в экранных пикселях — не «квадрат w×h», а точный
+          // размер тени, которую в ЭТОЙ изометрии (P(x,y,z)=[OX+(x-y)*TW,
+          // OY+(x+y)*TH-z*ZH]) отбрасывает бокс w×d×h: по ширине это диагональ
+          // (w+d)*TW (ширина/глубина одинаково растягивают экранный X), по
+          // высоте — и рост от d/w*TH (та же диагональ, но по вертикали), И
+          // высота h*ZH. Раньше вместо (w+d)*TH+h*ZH бралось только h*ZH — для
+          // низких широких предметов (диван) почти не отличалось, а для узких
+          // высоких (стеллаж — фасад втрое уже шкафа при похожей высоте)
+          // разница огромная: ширина по факту доминировала над высотой,
+          // масштаб задирался по ширине и раздувал картинку по высоте вместе с
+          // ней (тянем и w, и h ОДНИМ scale, чтобы не исказить перспективу
+          // самого рисунка). min() — картинка вписывается в габарит, не
+          // растягивается ни по одной оси сверх него.
+          const targetW = (w + d) * I.PROJ.TW;
+          const targetH = (w + d) * I.PROJ.TH + h * I.PROJ.ZH;
+          const scale = Math.min(targetW / src.width, targetH / src.height);
+          entry.img.setOrigin(0.5, 1);
+          entry.img.setTexture(key).setVisible(true).setScale(scale)
+            .setPosition(anchor[0], anchor[1]).setDepth(floorRenderDepth(it, pos));
+        }
         // Разворот при перестановке: раз картинка не может повернуться на
         // 90°, как процедурный силуэт (см. frame()/orientation() в
         // itemShapes.js), отражаем её по той же стороне, что решает
@@ -346,11 +507,55 @@
       // этом случае просто пропускает).
       const col = this.lightsOn ? COL.amber : COL.chalk;
       const fillA = this.lightsOn ? 0.3 : 0.12, lineA = this.lightsOn ? 1 : 0.4;
-      // шнур обязателен: без него высота подвеса не читается
-      g.lineStyle(1.2, col, lineA); g.lineBetween(t[0], t[1], b[0], b[1]);
-      g.fillStyle(col, fillA); g.fillCircle(b[0], b[1] + 5, iid === 'chandelier' ? 10 : 5);
-      g.lineStyle(1.2, col, lineA); g.strokeCircle(b[0], b[1] + 5, iid === 'chandelier' ? 10 : 5);
-      if (this.mode === 'inventory') this.drawGrabPoint(g, b[0], b[1] + 5);
+      const entry = this.itemGfx.get('CEIL');
+      const state = this.furnitureSprites && FS && FS.pickState(iid, null);
+      if (state) {
+        // Картинка (сейчас — только «люстра», см. Furniture/manifest.json)
+        // вместо процедурного шнур+кружок. Нет формального footprint'а —
+        // потолочный предмет не стоит на полу, (w+d)*TW тут взять неоткуда
+        // — целевой габарит фиксированный, подогнать под конкретную
+        // картинку — дело geo.scaleMul (ручная правка в
+        // AssetGeometryEditor), не автоматики. Origin по умолчанию (0.5,1,
+        // низ силуэта) для висящего сверху предмета неверен — сюда почти
+        // всегда нужна ручная правка anchor (крепление — ВЕРХ картинки, не
+        // низ), это ожидаемо, не баг пайплайна.
+        const key = FS.textureKey(iid, state);
+        if (!entry.img) entry.img = this.add.image(0, 0, key).setOrigin(0.5, 0);
+        const src = this.textures.get(key).getSourceImage();
+        const AG = root.AssetGeometry;
+        const auto = AG.autoFurniture(key, src);
+        const override = AG.effectiveOverride('furn:' + iid, state);
+        const geo = AG.resolve(auto, override);
+        const contentW = geo.contentW || src.width, contentH = geo.contentH || src.height;
+        const targetW = 1.7 * I.PROJ.TW, targetH = 1.7 * I.PROJ.TW;
+        const scale = Math.min(targetW / contentW, targetH / contentH) * geo.scaleMul;
+        entry.img.setOrigin(geo.originX, geo.originY);
+        entry.img.setTexture(key).setVisible(true).setScale(scale)
+          .setPosition(t[0] + geo.offsetX, t[1] + geo.offsetY)
+          // Тонировка вместо отдельного «выключенного» силуэта — свечение
+          // всё равно рисует room/lighting.js отдельным слоем (GLOW_DEPTH),
+          // тут нужно только показать «прибор потушен», как раньше делал
+          // тусклый col у процедурного кружка.
+          .setTint(this.lightsOn ? 0xffffff : 0xAFA89C).setAlpha(this.lightsOn ? 1 : 0.8)
+          .setDepth(CEIL_DEPTH + 0.001 + geo.sortBias);
+      } else {
+        if (entry.img) entry.img.setVisible(false);
+        // шнур обязателен: без него высота подвеса не читается
+        g.lineStyle(1.2, col, lineA); g.lineBetween(t[0], t[1], b[0], b[1]);
+        g.fillStyle(col, fillA); g.fillCircle(b[0], b[1] + 5, iid === 'chandelier' ? 10 : 5);
+        g.lineStyle(1.2, col, lineA); g.strokeCircle(b[0], b[1] + 5, iid === 'chandelier' ? 10 : 5);
+      }
+      if (this.mode === 'inventory') {
+        this.drawGrabPoint(g, b[0], b[1] + 5);
+        // «Крепление» (зона перетаскивания точки подвеса, lightPoly/
+        // dragOpening в room/shell.js) — раньше рисовалась в drawShell() на
+        // gShell (SHELL_DEPTH = -1), т.е. ПОД любой мебелью на полу (depth
+        // 0..~12): у задней стены с высокой мебелью зона пряталась под ней.
+        // Тут, на графике самого потолочного предмета (CEIL_DEPTH = 900),
+        // она гарантированно поверх всего — потолок и должен быть выше
+        // всего в комнате, как и сам светильник чуть выше.
+        this.polyOn(g, this.lightPoly(), COL.amber, 0.10, COL.amber, 1);
+      }
       return this.showLabels ? this.setLabel(text, b[0], b[1] + 28, D.ITEMS[iid].ru) : this.hideLabel(text);
     }
   };

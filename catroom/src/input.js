@@ -42,6 +42,21 @@
         return;
       }
 
+      // Крестик «Отладки предметов» (drawGeoPanel, ui/assetGeometryEditor.js)
+      // — тоже до всего остального и в любом режиме: панель может быть
+      // открыта поверх чего угодно, закрыть её нужно без лишних условий.
+      if (this.assetDebug && this.geoCloseBtn) {
+        const cb = this.geoCloseBtn;
+        if (x >= cb.x && x <= cb.x + cb.w && y >= cb.y && y <= cb.y + cb.h) {
+          this.assetDebug = false;
+          this.geoSelected = null; this.geoDragTarget = null;
+          this.geoCatFrameOverride = null; this.geoCatMove = false; this.geoApplyAll = false;
+          root.AssetGeometry.clearLive();
+          this.uiDirty = true;
+          return;
+        }
+      }
+
       const listOnR = this.mode === 'inventory' || this.mode === 'supplies';
 
       // закрыть список
@@ -73,13 +88,21 @@
 
       // настройки
       if (this.mode === 'settings') {
-        const S = { x: 24, y: 300, w: 492, h: 300 };
+        const S = { x: 24, y: 300, w: 492, h: 382 };
         if (x >= S.x + S.w - 80 && x <= S.x + S.w - 6 && y >= S.y + 10 && y <= S.y + 36) { this.setMode('view'); return; }
         const t = this.hitBtn(this.setBtns || [], x, y);
         if (t) {
           this[t.k] = !this[t.k];
           if (t.k === 'showWalk') this.shellDirty = true;
           if (t.k === 'showLabels' || t.k === 'furnitureSprites') this.rebuildItemGfx();
+          // Выключили «Отладку предметов» — сбросить выбор/перетаскивание и
+          // живую (несохранённую) правку, чтобы не осталась висеть до
+          // следующего включения.
+          if (t.k === 'assetDebug' && !this.assetDebug) {
+            this.geoSelected = null; this.geoDragTarget = null;
+            this.geoCatFrameOverride = null; this.geoCatMove = false; this.geoApplyAll = false;
+            root.AssetGeometry.clearLive();
+          }
           this.uiDirty = true;
           return;
         }
@@ -114,6 +137,45 @@
           return;
         }
         if (x >= S.x && x <= S.x + S.w && y >= S.y && y <= S.y + S.h) return;
+      }
+
+      // «Отладка предметов» (ui/assetGeometryEditor.js) — только в обычном
+      // режиме (не поверх инвентаря/других панелей: там тап по коту/коробке
+      // уже что-то делает — гладить/переставлять/переключать гэг, см. ниже
+      // по файлу — а тут ещё выбор ассета для правки). Приоритет: сначала
+      // хэндлы (перетащить уже выбранное), потом кнопки панели редактора,
+      // потом сам выбор нового ассета тапом.
+      if (this.assetDebug && this.mode === 'view') {
+        const handleKind = this.geoHitHandle(x, y);
+        if (handleKind) { this.geoStartDrag(handleKind); return; }
+        const gb = this.hitBtn(this.geoBtns || [], x, y);
+        if (gb) {
+          if (gb.id === 'geoSave') this.geoSaveCurrent();
+          else this.geoResetCurrent(); // geoReset и geoAuto — оба откат к автоматике
+          return;
+        }
+        const fb = this.geoFramesBtn;
+        if (fb && x >= fb.x && x <= fb.x + fb.w && y >= fb.y && y <= fb.y + fb.h) {
+          this.geoShowFrames = !this.geoShowFrames; this.uiDirty = true; return;
+        }
+        const sb = this.geoStateBtn;
+        if (sb && x >= sb.x && x <= sb.x + sb.w && y >= sb.y && y <= sb.y + sb.h) {
+          this.geoCycleState(); return;
+        }
+        const cfb = this.geoCatFrameBtn;
+        if (cfb && x >= cfb.x && x <= cfb.x + cfb.w && y >= cfb.y && y <= cfb.y + cfb.h) {
+          this.geoCycleCatFrame(); return;
+        }
+        const mc = this.geoMoveChk;
+        if (mc && x >= mc.x && x <= mc.x + mc.w && y >= mc.y && y <= mc.y + mc.h) {
+          this.geoCatMove = !this.geoCatMove; this.uiDirty = true; return;
+        }
+        const aac = this.geoApplyAllChk;
+        if (aac && x >= aac.x && x <= aac.x + aac.w && y >= aac.y && y <= aac.y + aac.h) {
+          this.geoApplyAll = !this.geoApplyAll; this.uiDirty = true; return;
+        }
+        const target = this.geoTargets().find(t => Math.hypot(x - t.screen[0], y - t.screen[1]) < 26);
+        if (target) { this.selectGeoTarget(target); return; }
       }
 
       // кнопки панелей
@@ -165,9 +227,23 @@
         const F = I.PROJ.F, cands = [];
         Object.keys(this.st.floor).forEach(iid => {
           const pos = this.st.floor[iid];
+          const it = D.ITEMS[iid];
+          const [w, d] = I.floorOrient(it, pos.x, pos.y), h = it.s[2];
+          // Точка захвата (жёлтый кружок) рисуется приподнятой над полом —
+          // I.P(..., h*0.5), см. drawGrabPoint/drawFloorItemInto в
+          // itemsRender.js — та же формула. Для невысоких предметов это
+          // почти не сдвигает экранную точку относительно плоского
+          // footprint-полигона, но для box/ficus (заметная высота) кружок
+          // на экране уходит выше диамонда footprint'а — тап точно по нему
+          // промахивался мимо poly. Держим ту же формулу здесь и добавляем
+          // отдельную проверку по радиусу вокруг маркера, а не только polygon.
+          const rot = pos.x <= pos.y, depFull = rot ? w : d;
+          const front = rot ? [pos.x + depFull / 2, pos.y] : [pos.x, pos.y + depFull / 2];
+          const marker = I.P(front[0], front[1], h * 0.5);
           cands.push({
             iid, from: iid, depth: I.floorDepth(pos),
-            poly: I.floorPoly(I.floorRect(D.ITEMS[iid], pos.x, pos.y))
+            poly: I.floorPoly(I.floorRect(it, pos.x, pos.y)),
+            marker
           });
         });
         Object.keys(this.st.place).filter(k => k !== 'CEIL' && this.zmap[k]).forEach(zid => {
@@ -183,8 +259,10 @@
           cands.push({ iid: this.st.place.CEIL, from: 'CEIL', depth: 1e9, poly: this.ceilHitPoly() });
         }
         cands.sort((a, b) => b.depth - a.depth);
+        const MARKER_R = 10;
         for (const c of cands) {
-          if (inPoly([x, y], c.poly)) {
+          const onMarker = c.marker && Math.hypot(x - c.marker[0], y - c.marker[1]) <= MARKER_R;
+          if (onMarker || inPoly([x, y], c.poly)) {
             this.drag = { kind: 'existing', from: c.from, iid: c.iid, p: [x, y] };
             this.uiDirty = true;
             return;
@@ -324,7 +402,13 @@
         const reason = I.rejectFloor(cx, cy, it, this.st, D.ITEMS, F, this.LAY, drag.from);
         if (!reason) {
           const prev = isExisting ? this.st.floor[drag.from] : null;
-          this.st.floor[drag.iid] = { x: cx, y: cy };
+          // .state переносим со старой позиции — иначе любая перестановка
+          // (даже «взял и положил на то же место») тихо сбрасывала предмет
+          // в состояние 'new' (см. FS.pickState): новый объект позиции не
+          // содержал поле state вовсе, только что выбранный пользователем
+          // вид терялся при каждом хвате.
+          this.st.floor[drag.iid] = prev && prev.state !== undefined
+            ? { x: cx, y: cy, state: prev.state } : { x: cx, y: cy };
           this.rebuild();
           // если постановка отрезала подход — откатываем
           if (this.NAV.unreachable.length) {

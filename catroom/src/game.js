@@ -53,6 +53,10 @@
       // и Furniture/manifest.json); сами PNG грузятся ниже, в
       // createStep2LoadImages(), после того как манифест точно пришёл.
       this.load.json('furnManifest', 'Furniture/manifest.json');
+      // Закоммиченный базовый слой ручных правок AssetGeometry (см. шапку
+      // room/assetGeometry.js) — расшаренный между origin'ами источник
+      // истины, localStorage поверх него — черновой слой текущей сессии.
+      this.load.json('assetGeometryData', 'src/room/assetGeometryData.json');
     }
 
     // Персонажи кота грузятся в 3 прохода, каждый — заново запущенный
@@ -67,6 +71,7 @@
     //   3) их callback: конфиги уже есть → знаем имена кадров → грузим PNG
     // Только после (3) — весь остальной прежний create() (комната/кот/UI/ввод).
     create() {
+      window.AssetGeometry.seedBase(this.cache.json.get('assetGeometryData') || {});
       this.catNames = this.cache.json.get('catManifest');
       this.load.once('complete', () => this.createStep2LoadImages());
       this.catNames.forEach(name => this.load.json('catcfg-' + name, `Cats/${name}/config.json`));
@@ -149,6 +154,16 @@
       // по умолчанию включены. См. room/lighting.js (collectLights) и
       // input.js (hitSwitch/тап по лампе).
       this.lightsOn = true; this.lampOn = true;
+      // «Отладка предметов» (ui/assetGeometryEditor.js, MIXIN_ASSET_GEO_EDITOR)
+      // — технический тумблер в «Настройки», не игровая механика.
+      // geoSelected — {kind,entityId,iid} текущего редактируемого ассета
+      // (кот/коробка) или null. geoDragTarget — 'anchor'|'sort'|null, что
+      // сейчас тащит палец (см. pointermove/pointerup ниже).
+      this.assetDebug = false;
+      this.geoSelected = null;
+      this.geoDragTarget = null;
+      this.geoShowFrames = false;
+      this.geoSaveFlashUntil = 0; // «вспышка» на кнопке Save после сохранения
       this.drag = null;
       this.listSwipeStart = null; // см. checkListSwipe (input.js)
       this.openingDrag = null; // 'door' | 'window' | null — см. dragOpening()
@@ -211,6 +226,12 @@
       // спрайтовый режим и у предмета есть картинка.
       this.invIconImgs = [0, 1, 2].map(() =>
         this.add.image(0, 0, '__DEFAULT').setVisible(false).setDepth(UI_DEPTH + 0.5));
+      // Онион-скин кадров цикла ходьбы в «Отладке предметов» (см.
+      // ui/assetGeometryEditor.js: drawGeoOnionSkin) — 8 с запасом (реальные
+      // циклы сейчас по 5-6 кадров, у 8-directional формата Labra свой цикл
+      // на каждое направление, тоже укладывается).
+      this.geoOnionImgs = Array.from({ length: 8 }, () =>
+        this.add.image(0, 0, '__DEFAULT').setVisible(false).setDepth(UI_DEPTH + 0.4));
       this.itemGfx = new Map(); // zid/iid -> { g: Graphics, t: Text|null, img: Image|null }
       this.gUI = this.add.graphics().setDepth(UI_DEPTH);
       this.tUI = new TextPool(this, UI_TEXT_DEPTH);
@@ -225,6 +246,10 @@
 
       this.input.on('pointerdown', p => this.onDown(p));
       this.input.on('pointermove', p => {
+        // Перетаскивание anchor/sort-хэндла в «Отладке предметов» —
+        // приоритет выше обычного drag: это отдельный ввод поверх сцены,
+        // не связан с this.drag (перенос мебели) вообще.
+        if (this.geoDragTarget) { this.geoUpdateDrag(p.worldX, p.worldY); return; }
         if (this.openingDrag) { this.dragOpening(p.worldX, p.worldY); return; }
         if (this.drag) {
           this.drag.p = [p.worldX, p.worldY];
@@ -232,6 +257,7 @@
         }
       });
       this.input.on('pointerup', p => {
+        if (this.geoDragTarget) { this.geoEndDrag(); return; }
         if (this.openingDrag) { this.openingDrag = null; return; }
         this.onUp(p);
       });
@@ -288,7 +314,10 @@
       if (this.uiDirty === undefined) this.uiDirty = true;
       // mode==='characters' перерисовывается каждый кадр не из-за uiDirty —
       // превью крутится по времени (catPreviewFrameName), не по событию.
-      if (this.uiDirty || this.drag || this.mode === 'characters') { this.drawUI(); this.uiDirty = false; }
+      // assetDebug — та же причина: выбранный кот двигается сам по себе
+      // (cat.x/y меняются в tick() выше), оверлей (ui/assetGeometryEditor.js)
+      // должен следовать за ним, а не ждать следующего игрового события.
+      if (this.uiDirty || this.drag || this.mode === 'characters' || this.assetDebug) { this.drawUI(); this.uiDirty = false; }
     }
   }
 
@@ -299,6 +328,7 @@
     window.MIXIN_CAT_APPEARANCE,
     window.MIXIN_CAT_BEHAVIOR,
     window.MIXIN_HUD,
+    window.MIXIN_ASSET_GEO_EDITOR,
     window.MIXIN_INPUT
   );
 

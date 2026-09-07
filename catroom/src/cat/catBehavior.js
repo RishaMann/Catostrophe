@@ -167,6 +167,11 @@
       const cat = this.cat;
       if (cat.bt > 0) { cat.bt -= dt; if (cat.bt <= 0) cat.bubble = null; }
       if (!this.catOn) return;
+      // «Отладка предметов»: кот по умолчанию замирает на месте (галочка
+      // «Движение» в assetGeometryEditor, выключена по умолчанию) — иначе
+      // автономная ходьба/смена позы мешает прицельно тащить хэндлы
+      // geometry или удерживать конкретный кадр на экране для правки.
+      if (this.assetDebug && !this.geoCatMove) return;
       cat.stateElapsedMs += dt * 1000;
       cat.ph += dt * (cat.st === 'walk' ? 9 : cat.st === 'dig' ? 14 : 2);
 

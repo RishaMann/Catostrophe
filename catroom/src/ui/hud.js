@@ -66,6 +66,10 @@
       else this.catPreviewImg.setVisible(false);
       if (this.drag) this.drawGhost(g);
       else this.ghostImg.setVisible(false);
+      // «Отладка предметов» — свой слой, тот же gUI (см. drawAssetGeometryOverlay,
+      // ui/assetGeometryEditor.js), рисуется поверх остального UI, чтобы
+      // хэндлы anchor/sort были видны даже над панелями списка/настроек.
+      this.drawAssetGeometryOverlay(g);
       this.tUI.end();
     },
 
@@ -193,7 +197,7 @@
     },
 
     drawSettings(g) {
-      const S = { x: 24, y: 300, w: 492, h: 346 };
+      const S = { x: 24, y: 300, w: 492, h: 382 };
       g.fillStyle(COL.panel, 0.97); g.fillRoundedRect(S.x, S.y, S.w, S.h, 14);
       g.lineStyle(1.2, COL.chalk, 0.3); g.strokeRoundedRect(S.x, S.y, S.w, S.h, 14);
       this.tUI.put(S.x + 20, S.y + 28, 'Настройки', 11, '#EBE2D5');
@@ -242,6 +246,22 @@
       this.tUI.put(S.x + 20 + bgW / 2, bgY + 18, 'Фон: ' + this.backgrounds[this.bgIndex].ru,
         10, '#EBE2D5aa', 'center');
       this.bgSwitchRect = { x: S.x + 20, y: bgY, w: bgW, h: 36 };
+
+      // «Отладка предметов» (AssetGeometryEditor, ui/assetGeometryEditor.js) —
+      // технический инструмент, не игровая настройка: показывает и позволяет
+      // руками поправить anchor/визуальный offset кота и коробки (см.
+      // технический аудит смещения при смене кадра/состояния). Отдельная
+      // кнопка, не в паре тумблеров выше — по той же причине, что и
+      // «Мебель: спрайты»/«Фон»: это не debug-подсветка существующей сцены, а
+      // отдельный режим со своим вводом (см. onDown в input.js).
+      const dbgY = bgY + 36 + 8, dbgOn = this.assetDebug;
+      g.fillStyle(dbgOn ? COL.amber : COL.chalk, dbgOn ? 0.2 : 0.05);
+      g.fillRoundedRect(S.x + 20, dbgY, bgW, 36, 9);
+      g.lineStyle(1.1, dbgOn ? COL.amber : COL.chalk, dbgOn ? 1 : 0.28);
+      g.strokeRoundedRect(S.x + 20, dbgY, bgW, 36, 9);
+      this.tUI.put(S.x + 20 + bgW / 2, dbgY + 18, 'Отладка предметов',
+        10, dbgOn ? '#E8A33D' : '#EBE2D5aa', 'center');
+      this.setBtns.push({ x: S.x + 20, y: dbgY, w: bgW, h: 36, k: 'assetDebug' });
 
       const N = this.NAV;
       const msg = !N ? '' : N.unreachable.length
@@ -351,23 +371,52 @@
       const h = it.s[2];
       const poly = (pts, fill, fa, stroke, sw, close) => this.polyOn(g, pts, fill, fa, stroke, sw, close);
       const FS = root.FURN_SPRITES;
-      const state = this.furnitureSprites && FS && FS.pickState(this.drag.iid, 'new');
+      // Существующий предмет в руке (перестановка) показывает СВОЁ текущее
+      // состояние (например, распотрошённую коробку), не всегда 'new' — иначе
+      // призрак в руке не совпадал бы с тем, что реально снимается с пола.
+      const existingPos = this.drag.kind === 'existing' && this.st.floor[this.drag.from];
+      const wanted = existingPos ? existingPos.state : 'new';
+      const state = this.furnitureSprites && FS && FS.pickState(this.drag.iid, wanted);
       if (state) {
         // Тот же спрайт, масштаб, опорная точка (перед, не центр) и
         // разворот-зеркало, что и у уже стоящего предмета
         // (drawFloorItemInto, room/itemsRender.js) — призрак должен
         // WYSIWYG-совпадать с тем, что окажется на полу после отпускания.
-        // Формулы те же, см. подробные комментарии там же.
+        // Формулы те же, см. подробные комментарии там же — включая
+        // AssetGeometry для предметов из AssetGeometry.FURNITURE_ITEMS:
+        // раньше эта ветка всегда держала origin (0.5,1) и масштаб по
+        // полному PNG, а стоящий на полу предмет уже считался по
+        // альфа-контенту — из-за рассинхрона захват в руку «съезжал» от
+        // жёлтой точки (drawGrabPoint) для коробки конкретно.
         const key = FS.textureKey(this.drag.iid, state);
         const src = this.textures.get(key).getSourceImage();
-        const targetW = (w + d) * I.PROJ.TW;
-        const targetH = (w + d) * I.PROJ.TH + h * I.PROJ.ZH;
-        const scale = Math.min(targetW / src.width, targetH / src.height);
         const rot = wx <= wy, depFull = rot ? w : d;
         const front = rot ? [wx + depFull / 2, wy] : [wx, wy + depFull / 2];
-        const anchor = I.P(front[0], front[1]);
-        this.ghostImg.setTexture(key).setVisible(true).setAlpha(0.88)
-          .setScale(scale).setPosition(anchor[0], anchor[1]).setFlipX(!rot);
+        const isAssetGeo = root.AssetGeometry.FURNITURE_ITEMS.has(this.drag.iid);
+        // Центр footprint'а для AssetGeometry-предметов (см. drawFloorItemInto,
+        // room/itemsRender.js — тот же выбор и по той же причине: совпасть с
+        // процедурным силуэтом itemShapes.js, который рисуется вокруг центра).
+        const anchorPoint = isAssetGeo ? [wx, wy] : front;
+        const anchor = I.P(anchorPoint[0], anchorPoint[1]);
+        if (isAssetGeo) {
+          const AG = root.AssetGeometry;
+          const auto = AG.autoFurniture(key, src);
+          const override = AG.effectiveOverride('furn:' + this.drag.iid, state);
+          const geo = AG.resolve(auto, override);
+          const contentW = geo.contentW || src.width, contentH = geo.contentH || src.height;
+          const targetW = (w + d) * I.PROJ.TW, targetH = (w + d) * I.PROJ.TH + h * I.PROJ.ZH;
+          const scale = Math.min(targetW / contentW, targetH / contentH) * geo.scaleMul;
+          this.ghostImg.setOrigin(geo.originX, geo.originY);
+          this.ghostImg.setTexture(key).setVisible(true).setAlpha(0.88).setScale(scale)
+            .setPosition(anchor[0] + geo.offsetX, anchor[1] + geo.offsetY).setFlipX(!rot);
+        } else {
+          const targetW = (w + d) * I.PROJ.TW;
+          const targetH = (w + d) * I.PROJ.TH + h * I.PROJ.ZH;
+          const scale = Math.min(targetW / src.width, targetH / src.height);
+          this.ghostImg.setOrigin(0.5, 1);
+          this.ghostImg.setTexture(key).setVisible(true).setAlpha(0.88)
+            .setScale(scale).setPosition(anchor[0], anchor[1]).setFlipX(!rot);
+        }
       } else {
         this.ghostImg.setVisible(false);
         const shapes = root.ITEM_SHAPES;

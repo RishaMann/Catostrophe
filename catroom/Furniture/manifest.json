@@ -42,5 +42,21 @@
   },
   "window": {
     "new": "window/new.png"
+  },
+  "chandelier": {
+    "new": "chandelier/new.png"
+  },
+  "scales": {
+    "new": "scales/new.png"
+  },
+  "portrait": {
+    "new": "portrait/new.png"
+  },
+  "clock": {
+    "new": "clock/new.png"
+  },
+  "door": {
+    "left": "door/left.png",
+    "frontLeft": "door/frontLeft.png"
   }
 }

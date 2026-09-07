@@ -8,7 +8,7 @@
   'use strict';
 
   const I = root.ISO;
-  const { COL, FONT, TEXT_DEPTH, WALK_FRAME_STEP } = root.RCFG;
+  const { COL, FONT, TEXT_DEPTH, WALK_FRAME_STEP, CAT_ART_SCALE_BASE } = root.RCFG;
 
   root.MIXIN_CAT_APPEARANCE = {
 
@@ -16,6 +16,43 @@
     activeCatConfig() { return this.cache.json.get('catcfg-' + this.catCharacter); },
     catFrameKeyFor(name, frameName) { return `cat_${name}_${frameName}`; },
     catFrameKey(frameName) { return this.catFrameKeyFor(this.catCharacter, frameName); },
+
+    // Геометрия конкретного кадра (room/assetGeometry.js) — где на картинке
+    // кадра находится «точка контакта с полом» (origin) и мелкая ручная
+    // поправка (offset/sortBias), если она есть в AssetGeometryEditor.
+    // Технический аудит: без этого катImg.setOrigin(0.5,1) был один на все
+    // кадры персонажа, а кадры вырезаны независимо (разные пропорции/
+    // паддинг) — отсюда «болтание» при смене кадра. Сама МИРОВАЯ позиция
+    // (cat.x/cat.y) тут не участвует и не меняется — resolveCatGeometry
+    // только решает, куда на СПРАЙТЕ поставить уже готовую мировую точку.
+    catSequenceFor(sprites, frameName) {
+      const w = sprites.walk;
+      if (!w) return null;
+      if (Array.isArray(w)) return w.includes(frameName) ? { id: `cat:${this.catCharacter}:walk`, frames: w } : null;
+      // 8-directional формат (Cats/Labra) — своя последовательность на
+      // каждое направление, они не обязаны иметь общую reference-точку
+      // (разные ракурсы тела).
+      for (const dir of Object.keys(w)) {
+        if (w[dir].frames && w[dir].frames.includes(frameName)) {
+          return { id: `cat:${this.catCharacter}:walk:${dir}`, frames: w[dir].frames };
+        }
+      }
+      return null;
+    },
+    resolveCatGeometry(frameName) {
+      const AG = root.AssetGeometry;
+      const key = this.catFrameKey(frameName);
+      const tex = this.textures.get(key);
+      const img = tex && tex.getSourceImage();
+      const sprites = this.activeCatConfig().sprites;
+      const seq = this.catSequenceFor(sprites, frameName);
+      const getImg = k => { const t = this.textures.get(k); return t && t.getSourceImage(); };
+      const auto = img
+        ? AG.autoCat(key, img, seq && seq.id, seq && seq.frames.map(f => this.catFrameKey(f)), getImg)
+        : { anchor: AG.DEFAULT_GEOMETRY.anchor, contentW: null, contentH: null };
+      const override = AG.effectiveOverride('cat:' + this.catCharacter, frameName);
+      return AG.resolve(auto, override);
+    },
 
     // Кнопка в нижнем правом меню (см. drawUI/onDown) открывает полноценную
     // панель выбора (drawCharacterPanel в ui/hud.js) — не цикличное
@@ -140,10 +177,36 @@
           frameName = sprites.idle;
       }
 
+      // «Отладка предметов»: переключатель кадров (geoCycleCatFrame,
+      // ui/assetGeometryEditor.js) насильно ставит конкретный спрайт вместо
+      // того, что выбрало бы обычное поведение (cat.st) — иначе поставить
+      // конкретную позу для правки anchor/scale можно было бы только
+      // дождавшись, пока кот сам её примет. Мировая позиция (b) и тень тут
+      // не участвуют — подменяется только то, какая картинка встаёт в неё.
+      if (this.assetDebug && this.geoCatFrameOverride) frameName = this.geoCatFrameOverride;
+
+      // Кэш текущего кадра — только для AssetGeometryEditor (ui/
+      // assetGeometryEditor.js), чтобы читать «что сейчас показано» без
+      // повторения всего switch(cat.st) выше.
+      this._lastCatFrame = frameName;
+
+      // Геометрия кадра (room/assetGeometry.js) — origin по альфа-контенту
+      // (авто) или ручной правке из AssetGeometryEditor (Настройки →
+      // «Отладка предметов»), не фиксированный (0.5,1) на все кадры. Мировая
+      // точка b = I.P(cat.x,cat.y) не пересчитывается вообще — геометрия
+      // решает только, куда НА СПРАЙТЕ она попадёт (origin) и мелкий
+      // пиксельный сдвиг (offset) поверх этого.
+      const geo = this.resolveCatGeometry(frameName);
       this.catImg.setTexture(this.catFrameKey(frameName));
+      this.catImg.setOrigin(geo.originX, geo.originY);
+      // scaleMul — ручная поправка размера из AssetGeometryEditor (тянуть за
+      // угол), поверх базового масштаба персонажа (CAT_ART_SCALE_BASE*zoom),
+      // не вместо него — общий масштаб «комната приближена/отдалена»
+      // (params.zoom) должен по-прежнему одинаково двигать всех персонажей.
+      this.catImg.setScale(CAT_ART_SCALE_BASE * this.params.zoom * geo.scaleMul);
       this.catImg.setFlipX(flip);
-      this.catImg.setPosition(b[0], b[1] + bobY);
-      this.catImg.setDepth(depth);
+      this.catImg.setPosition(b[0] + geo.offsetX, b[1] + bobY + geo.offsetY);
+      this.catImg.setDepth(depth + geo.sortBias);
 
       // тень и реплика — по-прежнему векторные, чуть позади спрайта. Тень —
       // по одной на каждый источник света в радиусе (room/lighting.js:
