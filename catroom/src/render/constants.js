@@ -72,10 +72,20 @@
   // числа, код их не завязывает ни на что другое.
   const BANNER_ROTATE_MS = 6000;
   const BANNER_AD_EVERY = 4;
+  // Пауза перед возобновлением ротации после закрытия панели ⓘ (см.
+  // closePromoInfoPanel, ui/hud.js) — не сразу и не остаток старого
+  // 6-секундного окна, а всегда ровно эта задержка от момента закрытия.
+  const BANNER_RESUME_DELAY_MS = 3000;
+
+  // Автосохранение состояния игрока (save.js) — раз в столько мс, плюс на
+  // скрытие/закрытие вкладки (visibilitychange/beforeunload, см. game.js).
+  // Дешёвая операция (один JSON.stringify), интервал взят с запасом, не под
+  // измеренную нагрузку.
+  const SAVE_INTERVAL_MS = 5000;
 
   root.RCFG = {
     COL, FONT, DEBUG,
     BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, CEIL_DEPTH, UI_DEPTH, UI_TEXT_DEPTH,
-    CAT_ART_SCALE_BASE, WALK_FRAME_STEP, AD_BANNER_H, BANNER_ROTATE_MS, BANNER_AD_EVERY
+    CAT_ART_SCALE_BASE, WALK_FRAME_STEP, AD_BANNER_H, BANNER_ROTATE_MS, BANNER_AD_EVERY, BANNER_RESUME_DELAY_MS, SAVE_INTERVAL_MS
   };
 })(typeof window !== 'undefined' ? window : globalThis);

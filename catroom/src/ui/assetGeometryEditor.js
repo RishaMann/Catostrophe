@@ -323,16 +323,27 @@
     drawAssetGeometryOverlay(g) {
       if (!this.assetDebug) { this.geoOnionImgs.forEach(im => im.setVisible(false)); return; }
 
+      // Кружки-цели/хэндлы/крестик/footprint имеют смысл только поверх самой
+      // комнаты (mode==='view') — тап по ним и так работает лишь тогда (см.
+      // onDown), а с открытой другой панелью (Настройки, Инвентарь...) они
+      // просто вылезали поверх неё, хотя нажать всё равно было нельзя. Сама
+      // панель редактора (drawGeoPanel — крестик, шапка-таскалка, Save/
+      // Reset) остаётся отдельным слоем и рисуется всегда, с последним
+      // валидным выбором, чтобы не мигать при переключении панелей.
+      const inScene = this.mode === 'view';
       const targets = this.geoTargets();
-      targets.forEach(t => {
-        const on = this.geoSelected && this.geoSelected.entityId === t.entityId;
-        g.lineStyle(1.4, on ? COL.amber : COL.chalk, on ? 0.9 : 0.45);
-        g.strokeCircle(t.screen[0], t.screen[1], 8);
-      });
+      if (inScene) {
+        targets.forEach(t => {
+          const on = this.geoSelected && this.geoSelected.entityId === t.entityId;
+          g.lineStyle(1.4, on ? COL.amber : COL.chalk, on ? 0.9 : 0.45);
+          g.strokeCircle(t.screen[0], t.screen[1], 8);
+        });
+      }
 
-      if (!this.geoSelected || !targets.some(t => t.entityId === this.geoSelected.entityId)) {
+      const selValid = this.geoSelected && targets.some(t => t.entityId === this.geoSelected.entityId);
+      if (!inScene || !selValid) {
         this.geoOnionImgs.forEach(im => im.setVisible(false));
-        this.drawGeoPanel(g, null);
+        this.drawGeoPanel(g, selValid ? this.geoSelected : null);
         return;
       }
       const sel = this.geoSelected;
@@ -419,22 +430,28 @@
       if (sel && sel.kind === 'cat') { rows += allKeys0.length > 1 ? 1 : 0; rows += 1; /* frames toggle */ }
       else if (allKeys0.length > 1) { rows += 1; /* state cycle */ }
       const hasChkRow = sel && ((sel.kind === 'cat') || allKeys0.length > 1);
-      const S = { x: 24, y: 108, w: 300, h: !sel ? 60 : 96 + rows * 38 + (hasChkRow ? 34 : 0) + 64 };
+      const S = { x: this.geoPanelPos.x, y: this.geoPanelPos.y, w: 300, h: !sel ? 60 : 96 + rows * 38 + (hasChkRow ? 34 : 0) + 64 };
       g.fillStyle(COL.panel, 0.95); g.fillRoundedRect(S.x, S.y, S.w, S.h, 10);
       g.lineStyle(1.1, COL.amber, 0.75); g.strokeRoundedRect(S.x, S.y, S.w, S.h, 10);
+      // Шапка — вся полоса заголовка (за вычетом крестика) — то, за что
+      // панель таскают по экрану (см. game.js: geoPanelDrag). Панель по
+      // умолчанию встаёт в левый верхний угол и может закрыть собой сам
+      // редактируемый предмет (особенно на потолке/дальней стене) — раньше
+      // подвинуть её было нечем.
+      const cs = 22;
+      this.geoPanelHeaderRect = { x: S.x, y: S.y, w: S.w - cs - 12, h: 30 };
       this.tUI.put(S.x + 12, S.y + 16, 'Отладка предметов', 10, '#E8A33D');
 
       // Крестик — закрыть окно, полностью выключив режим (не просто снять
       // выбор): та же кнопка, что и тумблер в Настройках, для симметрии с
       // остальными панелями (у них тоже «× закрыть» в углу).
-      const cs = 22;
       this.geoCloseBtn = { x: S.x + S.w - cs - 8, y: S.y + 7, w: cs, h: cs };
       g.fillStyle(COL.chalk, 0.08); g.fillRoundedRect(this.geoCloseBtn.x, this.geoCloseBtn.y, cs, cs, 6);
       g.lineStyle(1, COL.chalk, 0.32); g.strokeRoundedRect(this.geoCloseBtn.x, this.geoCloseBtn.y, cs, cs, 6);
       this.tUI.put(this.geoCloseBtn.x + cs / 2, this.geoCloseBtn.y + cs / 2, '×', 13, '#E8A33Dcc', 'center');
 
       if (!sel) {
-        this.tUI.put(S.x + 12, S.y + 38, 'Тапните кота или коробку', 9.5, '#EBE2D5aa');
+        this.tUI.put(S.x + 12, S.y + 38, 'Тапни по точке на персонаже или объекте для редактирования', 9.5, '#EBE2D5aa');
         this.geoBtns = []; this.geoFramesBtn = null; this.geoStateBtn = null;
         this.geoCatFrameBtn = null; this.geoMoveChk = null; this.geoApplyAllChk = null;
         return;

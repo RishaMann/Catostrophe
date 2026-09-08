@@ -44,6 +44,22 @@
       this.drawLighting();
     },
 
+    // «Убрать мебель» (Настройки) — вся расставленная мебель разом уходит
+    // обратно в инвентарь: тем же способом, что и одиночная перестановка
+    // (delete из st.floor/st.place) — список «что доступно поставить»
+    // строится от обратного, весь каталог минус занятое (см. listSource,
+    // ui/hud.js), отдельного стока для «убранного» не нужно. CEIL не
+    // трогаем — потолочный светильник не съёмная мебель, а часть комнаты
+    // (drawCeilInto не переживает пустой st.place.CEIL); его гэг-состояние
+    // (люстра после гэга) тоже сохраняем.
+    clearAllFurniture() {
+      const ceilState = this.st.placeState.CEIL;
+      this.st.floor = {};
+      Object.keys(this.st.place).forEach(zid => { if (zid !== 'CEIL') delete this.st.place[zid]; });
+      this.st.placeState = ceilState !== undefined ? { CEIL: ceilState } : {};
+      this.rebuild();
+    },
+
     /* ---------- общий помощник отрисовки многоугольника на произвольный Graphics ---------- */
     polyOn(g, pts, fill, fa, stroke, sw, close) {
       const p = pts.map(a => ({ x: a[0], y: a[1] }));

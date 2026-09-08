@@ -9,7 +9,7 @@
 
   const D = root.GAMEDATA, I = root.ISO, IC = root.ICONS;
   const { SCREEN_H, SCREEN_W, OX } = I;
-  const { COL, AD_BANNER_H, BANNER_AD_EVERY } = root.RCFG;
+  const { COL, FONT, AD_BANNER_H, BANNER_AD_EVERY, BANNER_ROTATE_MS, BANNER_RESUME_DELAY_MS } = root.RCFG;
   const { clamp, inPoly } = root.GUTIL;
 
   // Однострочная обрезка — полоса тесная (AD_BANNER_H), переносы строк не
@@ -56,6 +56,7 @@
       const g = this.gUI; g.clear(); this.tUI.begin();
       this.drawHUD(g);
       this.drawBannerStrip(g);
+      this.drawPromoInfoPanel(g);
 
       const listOnR = this.mode === 'inventory' || this.mode === 'supplies';
       this.drawButtons(g, this.ui.L, [
@@ -143,21 +144,134 @@
       return seq;
     },
 
+    // Шаг ротации нижней полосы — вызывается из game.js update() раз в
+    // BANNER_ROTATE_MS. Подсказка показывается всегда; на рекламном слоте
+    // спрашиваем Promotion (root.PROMOTION.pickEligible) — если сейчас нет
+    // подходящей кампании (Promotion выключен целиком, конкретная кампания
+    // выключена, или ещё не прошёл firstLaunchDelayMs с первого запуска
+    // игрока), слот пропускается и лента едет дальше к следующей подсказке,
+    // а не показывает пустую рекламную заглушку. guard защищает от
+    // зависания, если ВСЯ последовательность вдруг окажется рекламными
+    // слотами (в этом MVP невозможно — HINTS всегда больше половины seq).
+    // Не вызывается вовсе, пока открыта панель ⓘ (см. game.js update()) —
+    // сообщение, к которому относится инфа, должно остаться в ленте и
+    // оставаться кликабельным, а не уехать по таймеру на следующий слайд.
+    advanceBannerSlide() {
+      const seq = this.bannerSlides();
+      for (let guard = 0; guard < seq.length; guard++) {
+        this.bannerSlideIdx = (this.bannerSlideIdx + 1) % seq.length;
+        const slide = seq[this.bannerSlideIdx];
+        if (slide.type !== 'ad') { this._activePromo = null; return; }
+        // «Слот показан» — метрика уровня самой ленты (место существует и
+        // мы на него зашли), не зависит от того, нашлась ли кампания.
+        if (root.ANALYTICS) root.ANALYTICS.sendMetrikaGoal('banner_ad_slot_shown');
+        const promo = root.PROMOTION && root.PROMOTION.pickEligible(this.firstGameStartedAt, this._lastPromoId);
+        if (promo) {
+          this._activePromo = promo;
+          this._lastPromoId = promo.id;
+          if (root.ANALYTICS) root.ANALYTICS.sendMetrikaGoal(promo.analytics.impression, { promotionId: promo.id });
+          return;
+        }
+        // Ни одной подходящей кампании — слот пуст, продолжаем цикл к
+        // следующему индексу (следующая подсказка или ещё один рекламный
+        // слот дальше по ленте).
+      }
+      this._activePromo = null;
+    },
+
+    // Закрытие панели ⓘ — единая точка (вызывается из input.js на «× закрыть»
+    // и на тап вне панели), а не голое `this.promoInfoOpen = false` в
+    // нескольких местах: ротация ленты была на паузе, пока панель открыта
+    // (см. game.js update()), и должна возобновиться не сразу, а через
+    // BANNER_RESUME_DELAY_MS. Подвигаем bannerSlideAt вперёд тем же приёмом,
+    // что и обычная ротация (time - bannerSlideAt >= BANNER_ROTATE_MS) —
+    // отдельного таймера/поля не заводим.
+    closePromoInfoPanel() {
+      this.promoInfoOpen = false;
+      this.bannerSlideAt = this.time.now - BANNER_ROTATE_MS + BANNER_RESUME_DELAY_MS;
+      this.uiDirty = true;
+    },
+
     // Полоса под кнопками панелей (см. AD_BANNER_H, render/constants.js и bot
     // в panelGeo — кнопки подвинуты выше ровно на эту высоту), во всю ширину
-    // канваса, у самого низа экрана. Ротация между подсказками и рекламным
-    // слотом — см. bannerSlides()/game.js update(); реклама сама — пока
-    // размеченное место без SDK (метрика для показа слота уже шлётся из
-    // update(), см. ANALYTICS.sendMetrikaGoal('banner_ad_slot_shown')), на
-    // сцену (I.PROJ) полоса не влияет.
+    // канваса, у самого низа экрана. Ротация — advanceBannerSlide() выше;
+    // если на рекламном слоте есть активная кампания (this._activePromo) —
+    // рисуем её двухстрочник + ⓘ и запоминаем хит-зоны для input.js, иначе
+    // (обычная подсказка или пустой рекламный слот без кампании) — прежний
+    // однострочный вид. Высота полосы (AD_BANNER_H) не меняется ни в одном
+    // из случаев — переключение подсказка↔реклама не двигает сцену/кнопки.
     drawBannerStrip(g) {
       const h = AD_BANNER_H, y = SCREEN_H - h;
       g.fillStyle(COL.deep, 0.9); g.fillRect(0, y, SCREEN_W, h);
       g.lineStyle(1, COL.chalk, 0.18); g.lineBetween(0, y, SCREEN_W, y);
       const seq = this.bannerSlides();
       const slide = seq[this.bannerSlideIdx % seq.length];
-      const text = slide.type === 'ad' ? 'место для рекламного баннера' : ellipsize(slide.text, 90);
-      this.tUI.put(SCREEN_W / 2, y + h / 2, text, 10, '#EBE2D555', 'center');
+      this.bannerMainRect = null;
+      this.bannerInfoRect = null;
+
+      if (slide.type === 'ad' && this._activePromo) {
+        const promo = this._activePromo, infoW = 30;
+        this.bannerMainRect = { x: 0, y, w: SCREEN_W - infoW, h };
+        this.bannerInfoRect = { x: SCREEN_W - infoW, y, w: infoW, h };
+        const cx = this.bannerMainRect.w / 2;
+        this.tUI.put(cx, y + h / 2 - 7, ellipsize(promo.line1, 52), 9, '#EBE2D5cc', 'center');
+        this.tUI.put(cx, y + h / 2 + 7, ellipsize(promo.line2, 52), 9, '#EBE2D588', 'center');
+        const ix = SCREEN_W - infoW / 2;
+        g.fillStyle(COL.chalk, 0.14); g.fillCircle(ix, y + h / 2, 10);
+        g.lineStyle(1, COL.chalk, 0.5); g.strokeCircle(ix, y + h / 2, 10);
+        this.tUI.put(ix, y + h / 2, 'i', 10, '#EBE2D5cc', 'center');
+      } else {
+        const text = slide.type === 'ad' ? 'место для рекламного баннера' : ellipsize(slide.text, 90);
+        this.tUI.put(SCREEN_W / 2, y + h / 2, text, 10, '#EBE2D555', 'center');
+      }
+    },
+
+    // Всплывающая панель ⓘ (promo.infoText) — та же геометрия панели, что у
+    // drawPlaceholderPanel/drawSettings (скруглённый прямоугольник, заголовок,
+    // «× закрыть»), не отдельная modal-система. Открывается/закрывается в
+    // input.js (onDown); тут только отрисовка и подготовка хит-зоны закрытия.
+    // Показывает this.promoInfoPromo — снимок кампании на МОМЕНТ клика по ⓘ
+    // (input.js), не текущий this._activePromo: лента под панелью продолжает
+    // ротацию сама по себе, а открытая панель держится, пока пользователь её
+    // не закроет (тап вне/«× закрыть») — не должна мигать/закрываться сама
+    // просто потому, что баннер сменил слайд.
+    // this.promoInfoText — обычный this.add.text (не через TextPool): ему
+    // одному нужен wordWrap, TextPool всегда однострочный.
+    drawPromoInfoPanel(g) {
+      if (!this.promoInfoOpen || !this.promoInfoPromo) {
+        this.promoInfoText.setVisible(false);
+        this.promoInfoPanelRect = null;
+        return;
+      }
+      const w = Math.min(SCREEN_W - 40, 460), pad = 14;
+      const x = (SCREEN_W - w) / 2;
+      this.promoInfoText.setStyle({
+        fontFamily: FONT, fontSize: '11px', color: '#EBE2D5cc',
+        wordWrap: { width: w - pad * 2 }
+      });
+      this.promoInfoText.setText(this.promoInfoPromo.infoText);
+      const h = Math.min(220, this.promoInfoText.height + pad * 2 + 26);
+      const bannerY = SCREEN_H - AD_BANNER_H;
+      // Текст (TextPool/promoInfoText) в этой игре всегда рисуется поверх
+      // ЛЮБОЙ графики, включая чужой панельный фон (UI_TEXT_DEPTH выше
+      // UI_DEPTH у всех панелей одинаково) — если эта панель заедет вниз на
+      // область кнопок «Настройки»/«Задания», их подписи будут просвечивать
+      // сквозь мой фон независимо от порядка отрисовки. Другие панели
+      // (drawSettings и т.п.) с кнопками никогда не пересекаются, поэтому
+      // раньше это было не важно; эта — новая, привязана к нижней полосе —
+      // явно ограничиваем низ панели верхним краем кнопочных панелей.
+      const buttonsTop = Math.min(this.ui.L.poly[1][1], this.ui.R.poly[1][1]);
+      const panelBottom = Math.min(bannerY - 8, buttonsTop - 8);
+      const panelY = panelBottom - h;
+      // Полностью непрозрачная заливка (не 0.9x, как у остальных панелей) —
+      // эта панель всплывает поверх самой оживлённой части кадра (комната +
+      // рекламная полоса сразу под ней), полупрозрачный фон там читался хуже.
+      g.fillStyle(COL.panel, 1); g.fillRoundedRect(x, panelY, w, h, 12);
+      g.lineStyle(1.2, COL.chalk, 0.4); g.strokeRoundedRect(x, panelY, w, h, 12);
+      this.tUI.put(x + pad, panelY + 16, 'Партнёрская ссылка', 10, '#EBE2D5aa');
+      this.tUI.put(x + w - pad, panelY + 16, '× закрыть', 10, '#E8A33Dcc', 'right');
+      this.promoInfoText.setOrigin(0, 0).setPosition(x + pad, panelY + 30).setVisible(true);
+      this.promoInfoPanelRect = { x, y: panelY, w, h };
     },
 
     fullscreenBtnRect() { return { x: 504, y: 42, w: 28, h: 28 }; },
@@ -245,7 +359,7 @@
     },
 
     drawSettings(g) {
-      const S = { x: 24, y: 300, w: 492, h: 382 };
+      const S = { x: 24, y: 300, w: 492, h: 426 };
       g.fillStyle(COL.panel, 0.97); g.fillRoundedRect(S.x, S.y, S.w, S.h, 14);
       g.lineStyle(1.2, COL.chalk, 0.3); g.strokeRoundedRect(S.x, S.y, S.w, S.h, 14);
       this.tUI.put(S.x + 20, S.y + 28, 'Настройки', 11, '#EBE2D5');
@@ -310,6 +424,22 @@
       this.tUI.put(S.x + 20 + bgW / 2, dbgY + 18, 'Отладка предметов',
         10, dbgOn ? '#E8A33D' : '#EBE2D5aa', 'center');
       this.setBtns.push({ x: S.x + 20, y: dbgY, w: bgW, h: 36, k: 'assetDebug' });
+
+      // «Убрать мебель»/«Сбросить состояние комнаты» — не тумблеры (нет
+      // «включено», это разовые действия), поэтому не заливаются амбером и
+      // не читают this[k] для подписи — click-логика для них отдельная
+      // ветка в onDown (input.js), не общий toggle this[t.k] = !this[t.k].
+      // Пара в одну строку, как debug-тумблеры выше — экономит высоту
+      // панели под уже плотным списком настроек.
+      const actY = dbgY + 36 + 8, actW = (bgW - 12) / 2;
+      [['clearFurniture', 'Убрать мебель'], ['resetRoomState', 'Сбросить состояние комнаты']]
+        .forEach(([k, l], i) => {
+          const x = S.x + 20 + i * (actW + 12);
+          g.fillStyle(COL.chalk, 0.06); g.fillRoundedRect(x, actY, actW, 36, 9);
+          g.lineStyle(1.1, COL.chalk, 0.28); g.strokeRoundedRect(x, actY, actW, 36, 9);
+          this.tUI.put(x + actW / 2, actY + 18, l, 9.5, '#EBE2D5aa', 'center');
+          this.setBtns.push({ x, y: actY, w: actW, h: 36, k });
+        });
 
       const N = this.NAV;
       const msg = !N ? '' : N.unreachable.length
