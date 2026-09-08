@@ -9,7 +9,7 @@
 
   const D = root.GAMEDATA, I = root.ISO, IC = root.ICONS;
   const { SCREEN_H, SCREEN_W, OX } = I;
-  const { COL, FONT, AD_BANNER_H, BANNER_AD_EVERY, BANNER_ROTATE_MS, BANNER_RESUME_DELAY_MS } = root.RCFG;
+  const { COL, FONT, DEBUG, AD_BANNER_H, BANNER_AD_EVERY, BANNER_ROTATE_MS, BANNER_RESUME_DELAY_MS } = root.RCFG;
   const { clamp, inPoly } = root.GUTIL;
 
   // Однострочная обрезка — полоса тесная (AD_BANNER_H), переносы строк не
@@ -425,13 +425,31 @@
         10, dbgOn ? '#E8A33D' : '#EBE2D5aa', 'center');
       this.setBtns.push({ x: S.x + 20, y: dbgY, w: bgW, h: 36, k: 'assetDebug' });
 
+      // Отладка pixel-effect пайплайна (room/pixelEffects.js) — маркеры
+      // источников света/теней-кастеров и контур масок стёкол окна поверх
+      // сцены (this.pfxDebug, см. room/lighting.js:drawLighting,
+      // room/shell.js:updateRain). Только с ?debug=1 (RCFG.DEBUG) — рабочий
+      // инструмент для ручной настройки сцены, не игровая настройка.
+      let pfxY = dbgY;
+      if (DEBUG) {
+        pfxY = dbgY + 36 + 8;
+        const pfxOn = this.pfxDebug;
+        g.fillStyle(pfxOn ? COL.amber : COL.chalk, pfxOn ? 0.2 : 0.05);
+        g.fillRoundedRect(S.x + 20, pfxY, bgW, 36, 9);
+        g.lineStyle(1.1, pfxOn ? COL.amber : COL.chalk, pfxOn ? 1 : 0.28);
+        g.strokeRoundedRect(S.x + 20, pfxY, bgW, 36, 9);
+        this.tUI.put(S.x + 20 + bgW / 2, pfxY + 18, 'Pixel FX debug',
+          10, pfxOn ? '#E8A33D' : '#EBE2D5aa', 'center');
+        this.setBtns.push({ x: S.x + 20, y: pfxY, w: bgW, h: 36, k: 'pfxDebug' });
+      }
+
       // «Убрать мебель»/«Сбросить состояние комнаты» — не тумблеры (нет
       // «включено», это разовые действия), поэтому не заливаются амбером и
       // не читают this[k] для подписи — click-логика для них отдельная
       // ветка в onDown (input.js), не общий toggle this[t.k] = !this[t.k].
       // Пара в одну строку, как debug-тумблеры выше — экономит высоту
       // панели под уже плотным списком настроек.
-      const actY = dbgY + 36 + 8, actW = (bgW - 12) / 2;
+      const actY = pfxY + 36 + 8, actW = (bgW - 12) / 2;
       [['clearFurniture', 'Убрать мебель'], ['resetRoomState', 'Сбросить состояние комнаты']]
         .forEach(([k, l], i) => {
           const x = S.x + 20 + i * (actW + 12);

@@ -180,6 +180,7 @@
           }
           this[t.k] = !this[t.k];
           if (t.k === 'showWalk') this.shellDirty = true;
+          if (t.k === 'pfxDebug') this.drawLighting();
           if (t.k === 'showLabels' || t.k === 'furnitureSprites') this.rebuildItemGfx();
           // Выключили «Отладку предметов» — сбросить выбор/перетаскивание и
           // живую (несохранённую) правку, чтобы не осталась висеть до
