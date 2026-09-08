@@ -8,6 +8,7 @@
 
   const D = root.GAMEDATA, I = root.ISO;
   const { clamp, inPoly } = root.GUTIL;
+  const FS = root.FURN_SPRITES;
 
   // Штора — 4 состояния по тапу (см. onDown ниже): открыта/закрыта, каждая
   // ещё и с рваной парой (Furniture/curtain/tornOpen.png, tornClosed.png).
@@ -291,17 +292,40 @@
         }
       }
 
-      // Тап по коробке — переключить состояние (закрыта/распотрошена, см.
-      // Furniture/box в манифесте спрайтов): задел на будущее «состояния
-      // предмета от гэга кота» из room/furnitureSprites.js, пока без самого
-      // гэга — тап и есть временный триггер. Хранится прямо в позиции
-      // (st.floor.box.state), не завязано на furnitureSprites: переключается
-      // всегда, картинка просто пока не показывает разницу в линейном режиме.
-      if (this.mode === 'view' && !this.drag && this.st.floor.box) {
-        const pos = this.st.floor.box;
-        const poly = I.floorPoly(I.floorRect(D.ITEMS.box, pos.x, pos.y));
-        if (inPoly([x, y], poly)) {
-          pos.state = pos.state === 'afterGag' ? 'new' : 'afterGag';
+      // Тап по floor-предмету с гэг-состоянием — переключить (закрыта/
+      // распотрошена и т.п., см. Furniture/manifest.json). Раньше это было
+      // захардкожено только на box; теперь общее правило для ЛЮБОГО
+      // floor-предмета, у которого реально вырезана afterGag-картинка
+      // (FS.states(iid).afterGag) — стол/диван/шкаф/стеллаж подхватились
+      // сами, без отдельных блоков. Хранится в позиции (st.floor[iid].state),
+      // как и раньше у box; кандидаты отсортированы по глубине — тап должен
+      // попадать в то, что визуально сверху, если footprint'ы перекрылись.
+      if (this.mode === 'view' && !this.drag && FS) {
+        const gagCands = Object.keys(this.st.floor)
+          .filter(iid => FS.states(iid) && FS.states(iid).afterGag)
+          .map(iid => {
+            const pos = this.st.floor[iid];
+            return { pos, depth: I.floorDepth(pos), poly: I.floorPoly(I.floorRect(D.ITEMS[iid], pos.x, pos.y)) };
+          })
+          .sort((a, b) => b.depth - a.depth);
+        for (const c of gagCands) {
+          if (inPoly([x, y], c.poly)) {
+            c.pos.state = c.pos.state === 'afterGag' ? 'new' : 'afterGag';
+            this.rebuildItemGfx();
+            return;
+          }
+        }
+      }
+
+      // Тап по потолочному предмету с гэг-состоянием (сейчас — люстра, см.
+      // Furniture/chandelier/afterGag.png) — тот же переключатель, но
+      // хранится в st.placeState.CEIL (как у шторы/портрета), не в позиции:
+      // у потолочного предмета своей st.floor-позиции нет, только st.place.CEIL.
+      if (this.mode === 'view' && !this.drag && FS && this.st.place.CEIL) {
+        const ceilIid = this.st.place.CEIL;
+        if (FS.states(ceilIid) && FS.states(ceilIid).afterGag && inPoly([x, y], this.ceilHitPoly())) {
+          const cur = (this.st.placeState || {}).CEIL || 'new';
+          this.st.placeState.CEIL = cur === 'afterGag' ? 'new' : 'afterGag';
           this.rebuildItemGfx();
           return;
         }
@@ -343,12 +367,11 @@
         }
       }
 
-      // Тап по портрету — падает вдоль стены до пола и остаётся наискось,
-      // повторный тап — возвращается на место (this.st.placeState[zid] =
-      // 'fallen'/'new', см. drawWallItemInto в room/itemsRender.js —
-      // трансформ, не смена картинки, там же и формула для обеих точек).
-      // Мгновенно, без анимации падения — тот же уровень проработки, что у
-      // гэга шторы/коробки выше (тоже мгновенный toggle).
+      // Тап по портрету — анимированно падает вдоль стены до пола (твин
+      // поворота, затем замена на Furniture/portrait/afterGag.png уже с
+      // осколками), повторный тап — так же анимированно поднимается обратно
+      // (см. animatePortraitFall в room/itemsRender.js). Сам toggle
+      // this.st.placeState[zid] происходит по завершении твина, не тут.
       if (this.mode === 'view' && !this.drag) {
         const portraitZid = Object.keys(this.st.place).find(zid => this.st.place[zid] === 'portrait');
         const z = portraitZid && this.zmap[portraitZid];
@@ -357,7 +380,10 @@
           const fallen = wanted === 'fallen';
           // Хват — по decor-зоне на стене, пока висит; по кругу вокруг той
           // же точки на полу, куда «упал» (wallFloorAnchor), когда лежит —
-          // иначе после падения по нему нельзя тапнуть обратно.
+          // иначе после падения по нему нельзя тапнуть обратно. Пока идёт
+          // сам твин (entry.fallAnim) — тап просто ни во что не попадает,
+          // повторный запуск анимации поверх текущей запрещён внутри
+          // animatePortraitFall.
           let hit;
           if (fallen) {
             const fp = this.wallFloorAnchor(portraitZid);
@@ -366,8 +392,7 @@
             hit = inPoly([x, y], I.zonePoly(z, I.PROJ.F));
           }
           if (hit) {
-            this.st.placeState[portraitZid] = fallen ? 'new' : 'fallen';
-            this.rebuildItemGfx();
+            this.animatePortraitFall(portraitZid);
             return;
           }
         }

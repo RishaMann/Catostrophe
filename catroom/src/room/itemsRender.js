@@ -340,16 +340,21 @@
       const poly = (pts, fill, fa, stroke, sw, close) => this.polyOn(g, pts, fill, fa, stroke, sw, close);
       const pts = I.zonePoly(z, F), c = I.centroid(pts);
       const entry = this.itemGfx.get(zid);
+      // Твин падения/подъёма (animatePortraitFall, input.js — тап) на время
+      // анимации сам владеет entry.img покадрово; обычный rebuild тут ничего
+      // не трогает, иначе твин будет дёргаться на каждый посторонний вызов
+      // rebuildItemGfx() (см. комментарий в animatePortraitFall).
+      if (entry && entry.fallAnim) return text;
       const wanted = (this.st.placeState || {})[zid];
-      const state = this.furnitureSprites && FS && FS.pickState(iid, wanted);
-      // Портрет тапом «падает» вдоль стены до пола и остаётся наискось (см.
-      // input.js) — это НЕ смена картинки (в манифесте одна-единственная
-      // 'new', pickState тихо откатится на неё и для 'fallen'), а смена
-      // ТРАНСФОРМА поверх той же текстуры: другая точка (пол у стены, не
-      // середина decor-зоны), другой origin (низ рамки, а не альфа-anchor)
-      // и поворот. Мгновенно, без анимации падения — тот же уровень
-      // проработки, что у гэга коробки/шторы (тоже мгновенный toggle).
+      // Портрет тапом анимированно «падает» вдоль стены до пола (см.
+      // animatePortraitFall/input.js) и там остаётся — уже НЕ трансформ той
+      // же картинки, а настоящая вторая текстура (Furniture/portrait/
+      // afterGag.png, уже нарисованная лежащей на полу с осколками), угол
+      // здесь поэтому 0 (не наклон) — наклон был нужен только пока падение
+      // рисовалось поворотом прямоугольной стенной картинки.
       const fallen = iid === 'portrait' && wanted === 'fallen';
+      const stateWanted = fallen ? 'afterGag' : wanted;
+      const state = this.furnitureSprites && FS && FS.pickState(iid, stateWanted);
       if (state) {
         const key = FS.textureKey(iid, state);
         if (!entry.img) entry.img = this.add.image(0, 0, key).setOrigin(0.5, 0.5);
@@ -391,11 +396,11 @@
           // могла случайно давать то похожую, то совсем чужую шкалу).
           const mid = (z.r[0] + z.r[2]) / 2;
           const fallDepth = z.wall === 'right' ? mid : z.wall === 'frontRight' ? F + mid : mid;
-          entry.img.setOrigin(0.5, 1);
+          entry.img.setAngle(0);
+          entry.img.setOrigin(geo.originX, geo.originY);
           entry.img.setTexture(key).setVisible(true)
             .setScale(baseScale * geo.scaleMul)
-            .setPosition(fp[0], fp[1])
-            .setAngle(z.wall === 'right' ? -65 : 65)
+            .setPosition(fp[0] + geo.offsetX, fp[1] + geo.offsetY)
             .setDepth(fallDepth + 0.001)
             .setFlipX(false);
         } else {
@@ -603,7 +608,11 @@
       const col = this.lightsOn ? COL.amber : COL.chalk;
       const fillA = this.lightsOn ? 0.3 : 0.12, lineA = this.lightsOn ? 1 : 0.4;
       const entry = this.itemGfx.get('CEIL');
-      const state = this.furnitureSprites && FS && FS.pickState(iid, null);
+      // wanted — гэг-состояние потолочного предмета (тап, см. input.js),
+      // хранится в st.placeState.CEIL, как у шторы/портрета (своей
+      // st.floor-позиции у потолка нет).
+      const wanted = (this.st.placeState || {}).CEIL;
+      const state = this.furnitureSprites && FS && FS.pickState(iid, wanted);
       if (state) {
         // Картинка (сейчас — только «люстра», см. Furniture/manifest.json)
         // вместо процедурного шнур+кружок. Нет формального footprint'а —
