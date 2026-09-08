@@ -9,8 +9,15 @@
 
   const D = root.GAMEDATA, I = root.ISO, IC = root.ICONS;
   const { SCREEN_H, SCREEN_W, OX } = I;
-  const { COL, AD_BANNER_H } = root.RCFG;
+  const { COL, AD_BANNER_H, BANNER_AD_EVERY } = root.RCFG;
   const { clamp, inPoly } = root.GUTIL;
+
+  // Однострочная обрезка — полоса тесная (AD_BANNER_H), переносы строк не
+  // умещаются. Режем по символам, не по словам: проще, а на этой длине
+  // (десяток-полтора символов от места обрыва) разница не заметна.
+  function ellipsize(str, max) {
+    return str.length <= max ? str : str.slice(0, max - 1).trimEnd() + '…';
+  }
 
   root.MIXIN_HUD = {
 
@@ -48,7 +55,7 @@
     drawUI() {
       const g = this.gUI; g.clear(); this.tUI.begin();
       this.drawHUD(g);
-      this.drawAdBanner(g);
+      this.drawBannerStrip(g);
 
       const listOnR = this.mode === 'inventory' || this.mode === 'supplies';
       this.drawButtons(g, this.ui.L, [
@@ -118,16 +125,39 @@
       this.tUI.put(fr.x + fr.w / 2, fr.y + fr.h / 2, document.fullscreenElement ? '⤡' : '⤢', 14, '#EBE2D5cc', 'center');
     },
 
-    // Полоса под нижний рекламный баннер — во всю ширину канваса, у самого
-    // низа экрана, под кнопками панелей (см. AD_BANNER_H, render/constants.js
-    // и bot в panelGeo — кнопки подвинуты выше ровно на эту высоту). Пока
-    // рекламный SDK не подключён — просто размеченное место, поверх ничего не
-    // рисуется, кроме пустой сцены (I.PROJ) её не задевает.
-    drawAdBanner(g) {
+    // Последовательность слайдов нижней полосы: подсказки (GAMEDATA.HINTS) с
+    // рекламным слотом после каждых BANNER_AD_EVERY-1 подряд (см. константу —
+    // BANNER_AD_EVERY=4 → hint,hint,hint,ad,hint,...). Считается один раз и
+    // кэшируется на сцене (HINTS не меняется во время игры), не в drawUI —
+    // drawUI дёргается на каждый uiDirty, пересобирать один и тот же массив
+    // незачем. Индекс текущего слайда (bannerSlideIdx) и таймер ротации
+    // (bannerSlideAt) — в game.js update(), тут только чтение.
+    bannerSlides() {
+      if (this._bannerSlides) return this._bannerSlides;
+      const seq = [];
+      D.HINTS.forEach((text, i) => {
+        seq.push({ type: 'hint', text });
+        if ((i + 1) % (BANNER_AD_EVERY - 1) === 0) seq.push({ type: 'ad' });
+      });
+      this._bannerSlides = seq;
+      return seq;
+    },
+
+    // Полоса под кнопками панелей (см. AD_BANNER_H, render/constants.js и bot
+    // в panelGeo — кнопки подвинуты выше ровно на эту высоту), во всю ширину
+    // канваса, у самого низа экрана. Ротация между подсказками и рекламным
+    // слотом — см. bannerSlides()/game.js update(); реклама сама — пока
+    // размеченное место без SDK (метрика для показа слота уже шлётся из
+    // update(), см. ANALYTICS.sendMetrikaGoal('banner_ad_slot_shown')), на
+    // сцену (I.PROJ) полоса не влияет.
+    drawBannerStrip(g) {
       const h = AD_BANNER_H, y = SCREEN_H - h;
       g.fillStyle(COL.deep, 0.9); g.fillRect(0, y, SCREEN_W, h);
       g.lineStyle(1, COL.chalk, 0.18); g.lineBetween(0, y, SCREEN_W, y);
-      this.tUI.put(SCREEN_W / 2, y + h / 2, 'место для баннера', 10, '#EBE2D544', 'center');
+      const seq = this.bannerSlides();
+      const slide = seq[this.bannerSlideIdx % seq.length];
+      const text = slide.type === 'ad' ? 'место для рекламного баннера' : ellipsize(slide.text, 90);
+      this.tUI.put(SCREEN_W / 2, y + h / 2, text, 10, '#EBE2D555', 'center');
     },
 
     fullscreenBtnRect() { return { x: 504, y: 42, w: 28, h: 28 }; },

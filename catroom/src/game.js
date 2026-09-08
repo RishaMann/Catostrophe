@@ -12,7 +12,7 @@
 
   const I = window.ISO;
   const { SCREEN_W, SCREEN_H } = I;
-  const { DEBUG, CAT_ART_SCALE_BASE, BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, CEIL_DEPTH, UI_DEPTH, UI_TEXT_DEPTH } = window.RCFG;
+  const { DEBUG, CAT_ART_SCALE_BASE, BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, CEIL_DEPTH, UI_DEPTH, UI_TEXT_DEPTH, BANNER_ROTATE_MS } = window.RCFG;
   const { TextPool, catFrameNames } = window.GUTIL;
 
   /* ======================================================================== */
@@ -169,6 +169,13 @@
       this.openingDrag = null; // 'door' | 'window' | null — см. dragOpening()
       this.uiDirty = true;
       this.shellDirty = true;
+      // Ротация нижней полосы (bannerSlides/drawBannerStrip, ui/hud.js) —
+      // индекс текущего слайда и время последнего переключения (в
+      // Phaser-времени update(time), не Date.now() — тот же таймлайн, что и
+      // остальной игровой цикл). Слайд 0 — первая подсказка сразу при
+      // запуске, не реклама и не пустая полоса.
+      this.bannerSlideIdx = 0;
+      this.bannerSlideAt = 0;
 
       // --- слои: фон-панорама, оболочка сцены, подсветка пустых зон при
       // драге, кот, пул предметов (по одному Graphics+Text на занятую зону),
@@ -311,6 +318,21 @@
       this.drawZoneOverlay();
       this.updateCatVisual();
       this.updateRain(time);
+      // Ротация нижней полосы (bannerSlides/drawBannerStrip, ui/hud.js) — раз
+      // в BANNER_ROTATE_MS сдвигаем слайд и просим перерисовать UI. Заход
+      // именно НА рекламный слайд — единственный момент, когда стоит слать
+      // цель в Метрику: drawUI() дальше может перерисоваться много раз без
+      // смены слайда (любой другой uiDirty, например открыли инвентарь), и
+      // цель не должна дублироваться на каждый такой лишний кадр.
+      if (time - this.bannerSlideAt >= BANNER_ROTATE_MS) {
+        this.bannerSlideAt = time;
+        const seq = this.bannerSlides();
+        this.bannerSlideIdx = (this.bannerSlideIdx + 1) % seq.length;
+        if (seq[this.bannerSlideIdx].type === 'ad' && window.ANALYTICS) {
+          window.ANALYTICS.sendMetrikaGoal('banner_ad_slot_shown');
+        }
+        this.uiDirty = true;
+      }
       if (this.uiDirty === undefined) this.uiDirty = true;
       // mode==='characters' перерисовывается каждый кадр не из-за uiDirty —
       // превью крутится по времени (catPreviewFrameName), не по событию.

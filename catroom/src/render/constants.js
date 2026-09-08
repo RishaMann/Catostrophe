@@ -63,9 +63,19 @@
   // параметрами) — порог нужно пересчитать заново, он не универсален.
   const AD_BANNER_H = 32;
 
+  // Ротация нижней полосы (см. bannerSlides/drawBannerStrip, ui/hud.js):
+  // полоса не только под баннер — она чередует подсказки (GAMEDATA.HINTS) с
+  // рекламным слотом. BANNER_ROTATE_MS — как долго держится один слайд.
+  // BANNER_AD_EVERY — рекламный слайд после каждых стольки подсказок подряд
+  // (4 → 3 подсказки, потом реклама, см. bannerSlides). Подобраны на глаз —
+  // не измерялись на реальных игроках, при необходимости просто поменять
+  // числа, код их не завязывает ни на что другое.
+  const BANNER_ROTATE_MS = 6000;
+  const BANNER_AD_EVERY = 4;
+
   root.RCFG = {
     COL, FONT, DEBUG,
     BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, CEIL_DEPTH, UI_DEPTH, UI_TEXT_DEPTH,
-    CAT_ART_SCALE_BASE, WALK_FRAME_STEP, AD_BANNER_H
+    CAT_ART_SCALE_BASE, WALK_FRAME_STEP, AD_BANNER_H, BANNER_ROTATE_MS, BANNER_AD_EVERY
   };
 })(typeof window !== 'undefined' ? window : globalThis);
