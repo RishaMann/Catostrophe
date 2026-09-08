@@ -102,15 +102,17 @@
     curtainZid() {
       return ['WIN_ROD', 'WIN_FRAME'].find(zid => this.st.place[zid] === 'curtain') || null;
     },
-    // Штора закрыта — тап по ней переключает new/afterGag (см. input.js),
-    // 'afterGag' здесь и означает «задёрнута», не «после гэга кота» в
-    // буквальном смысле (та же пара состояний, что у box, но для шторы это
-    // просто открыто/закрыто — своих гэгов у неё пока нет). Без шторы вовсе
-    // окно всегда открыто.
+    // Штора закрыта — тап по ней циклит 4 состояния (см. input.js,
+    // CURTAIN_CYCLE): new/afterGag — пристойная пара «открыта/задёрнута»,
+    // tornOpen/tornClosed — та же пара, но рваная (Furniture/curtain/
+    // tornOpen.png, tornClosed.png). И afterGag, и tornClosed означают
+    // «задёрнута» для дождя/луча — рваность самой ткани тут ни при чём, это
+    // отдельное измерение. Без шторы вовсе окно всегда открыто.
     curtainClosed() {
       const zid = this.curtainZid();
       if (!zid) return false;
-      return ((this.st.placeState || {})[zid] || 'new') === 'afterGag';
+      const st = (this.st.placeState || {})[zid] || 'new';
+      return st === 'afterGag' || st === 'tornClosed';
     },
 
     // Пиксельный дождь виден только в спрайтовом режиме (это оформление

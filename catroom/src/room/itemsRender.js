@@ -181,7 +181,12 @@
     updateDoorSprite() {
       const show = this.furnitureSprites && FS && FS.has('door');
       if (!show) { if (this.doorImg) this.doorImg.setVisible(false); return; }
-      const state = FS.pickState('door', this.st.door.side);
+      // Гэг (this.st.door.gag, тап — см. input.js) — независимая ось поверх
+      // стороны, не второе значение того же поля: пока есть только
+      // door/leftAfterGag (см. Furniture/manifest.json), на frontLeft флаг
+      // просто не действует — pickState тихо откатится на голую сторону.
+      const wanted = (this.st.door.gag && this.st.door.side === 'left') ? 'leftAfterGag' : this.st.door.side;
+      const state = FS.pickState('door', wanted);
       if (!state) { if (this.doorImg) this.doorImg.setVisible(false); return; }
       const key = FS.textureKey('door', state);
       if (!this.doorImg) this.doorImg = this.add.image(0, 0, key).setOrigin(0.5, 1);
@@ -245,6 +250,89 @@
       if (z.wall === 'right') return I.P(mid, 0, 0);
       if (z.wall === 'frontRight') return I.P(F, mid, 0);
       return I.P(0, mid, 0); // 'left' — тоже дефолт для LF_*/OVERDOOR (band:'back', wall не задан)
+    },
+
+    // Поза «висит на стене» (state='new', origin по альфа-anchor, без
+    // fallen-трансформа) для настенного предмета БЕЗ спец-случая шторы
+    // (curtainPoly/isCurtain тут не нужны — только портрет пока пользуется
+    // этим хелпером, см. animatePortraitFall). Общая точка, чтобы конечная
+    // (при падении) / начальная (при подъёме) поза твина всегда совпадала с
+    // тем, что реально рисует обычная ветка drawWallItemInto — иначе они
+    // могли бы разъехаться при правке одной из двух копий формулы.
+    wallHangPose(zid, iid) {
+      const z = this.zmap[zid], F = I.PROJ.F;
+      const pts = I.zonePoly(z, F), c = I.centroid(pts);
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+      const state = FS.pickState(iid, 'new');
+      const key = FS.textureKey(iid, state);
+      const src = this.textures.get(key).getSourceImage();
+      const AG = root.AssetGeometry;
+      const auto = AG.autoFurniture(key, src);
+      const override = AG.effectiveOverride('furn:' + iid, state);
+      const geo = AG.resolve(auto, override);
+      const contentW = geo.contentW || src.width, contentH = geo.contentH || src.height;
+      const scale = Math.min(bw / contentW, bh / contentH) * 0.96 * geo.scaleMul;
+      return {
+        key, srcW: src.width, srcH: src.height, scale,
+        x: c[0] + geo.offsetX, y: c[1] + geo.offsetY,
+        originX: geo.originX, originY: geo.originY,
+        depth: I.depth(this.zmap, zid) + geo.sortBias
+      };
+    },
+
+    // Портрет тапом (см. input.js) анимированно падает/поднимается — твин по
+    // x/y/angle с ФИКСИРОВАННЫМ на всё время анимации origin (0.5,1): менять
+    // origin уже повёрнутого спрайта на лету нельзя без прыжка картинки,
+    // поэтому стенная поза (обычно — альфа-anchor geo.originX/Y) на время
+    // твина пересчитана в ту же точку привязки, что у половой (bottom-center)
+    // — при angle=0 это чистый перенос на (originX-0.5)*w, (originY-1)*h, без
+    // прыжка картинки. Текстура во время падения остаётся 'new' — на
+    // afterGag (уже лежащий портрет с осколками) меняем только по
+    // завершении твина; при подъёме наоборот, возвращаем 'new' сразу, твин
+    // идёт до стенной эквивалент-точки, обычный originX/Y геометрии уже
+    // восстановит следующий rebuildItemGfx() (entry.fallAnim он не тронет).
+    animatePortraitFall(zid) {
+      const entry = this.itemGfx.get(zid);
+      if (!entry || !entry.img || entry.fallAnim) return;
+      const z = this.zmap[zid], F = I.PROJ.F;
+      const wasFallen = (this.st.placeState || {})[zid] === 'fallen';
+      const hang = this.wallHangPose(zid, 'portrait');
+      const fp = this.wallFloorAnchor(zid);
+      const mid = (z.r[0] + z.r[2]) / 2;
+      const fallDepth = (z.wall === 'right' ? mid : z.wall === 'frontRight' ? F + mid : mid) + 0.001;
+      const fallAngle = z.wall === 'right' ? -65 : 65;
+      const w = hang.srcW * hang.scale, h = hang.srcH * hang.scale;
+      const hangEquivX = hang.x + (hang.originX - 0.5) * w;
+      const hangEquivY = hang.y + (hang.originY - 1) * h;
+      const img = entry.img;
+
+      entry.fallAnim = true;
+      if (!wasFallen) {
+        img.setTexture(hang.key).setOrigin(0.5, 1).setScale(hang.scale)
+          .setPosition(hangEquivX, hangEquivY).setAngle(0).setDepth(fallDepth);
+        this.tweens.add({
+          targets: img, x: fp[0], y: fp[1], angle: fallAngle,
+          duration: 320, ease: 'Cubic.easeIn',
+          onComplete: () => {
+            entry.fallAnim = false;
+            this.st.placeState[zid] = 'fallen';
+            this.rebuildItemGfx();
+          }
+        });
+      } else {
+        img.setTexture(hang.key).setOrigin(0.5, 1).setScale(hang.scale)
+          .setPosition(fp[0], fp[1]).setAngle(fallAngle).setDepth(fallDepth);
+        this.tweens.add({
+          targets: img, x: hangEquivX, y: hangEquivY, angle: 0,
+          duration: 260, ease: 'Cubic.easeOut',
+          onComplete: () => {
+            entry.fallAnim = false;
+            this.st.placeState[zid] = 'new';
+            this.rebuildItemGfx();
+          }
+        });
+      }
     },
 
     drawWallItemInto(g, text, zid, iid) {

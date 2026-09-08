@@ -9,6 +9,13 @@
   const D = root.GAMEDATA, I = root.ISO;
   const { clamp, inPoly } = root.GUTIL;
 
+  // Штора — 4 состояния по тапу (см. onDown ниже): открыта/закрыта, каждая
+  // ещё и с рваной парой (Furniture/curtain/tornOpen.png, tornClosed.png).
+  // new/afterGag остались как были (пристойные), торн-пара — третье
+  // измерение поверх них, не замена. closed для дождя/луча (room/shell.js
+  // curtainClosed()) — и afterGag, и tornClosed.
+  const CURTAIN_CYCLE = ['new', 'afterGag', 'tornOpen', 'tornClosed'];
+
   root.MIXIN_INPUT = {
 
     hitBtn(rects, x, y) {
@@ -300,6 +307,17 @@
         }
       }
 
+      // Тап по двери — переключить гэг-состояние (Furniture/door/
+      // leftAfterGag.png), тот же мгновенный toggle, что у коробки. Флаг
+      // живёт в this.st.door.gag (не в manifest-состоянии стороны — та
+      // остаётся left/frontLeft, см. updateDoorSprite в room/itemsRender.js),
+      // переключается независимо от того, на какой стене сейчас дверь.
+      if (this.mode === 'view' && !this.drag && this.hitDoor(x, y)) {
+        this.st.door.gag = !this.st.door.gag;
+        this.rebuildItemGfx();
+        return;
+      }
+
       // Тап по шторе — открыть/задёрнуть (this.st.placeState[zid], см.
       // room/shell.js: curtainZid/curtainClosed). Задёрнутая штора и гасит
       // лунный луч из окна (drawWindowBeam), и (в спрайтовом режиме) закрывает
@@ -316,7 +334,8 @@
           const poly = this.curtainPoly();
           if (inPoly([x, y], poly)) {
             const cur = (this.st.placeState || {})[curtainZid] || 'new';
-            this.st.placeState[curtainZid] = cur === 'afterGag' ? 'new' : 'afterGag';
+            const idx = CURTAIN_CYCLE.indexOf(cur);
+            this.st.placeState[curtainZid] = CURTAIN_CYCLE[(idx + 1) % CURTAIN_CYCLE.length];
             this.drawLighting();
             this.rebuildItemGfx();
             return;

@@ -8,8 +8,8 @@
   'use strict';
 
   const D = root.GAMEDATA, I = root.ISO, IC = root.ICONS;
-  const { SCREEN_H, OX } = I;
-  const { COL } = root.RCFG;
+  const { SCREEN_H, SCREEN_W, OX } = I;
+  const { COL, AD_BANNER_H } = root.RCFG;
   const { clamp, inPoly } = root.GUTIL;
 
   root.MIXIN_HUD = {
@@ -20,7 +20,12 @@
     // ни при каком размере комнаты.
     panelGeo() {
       const F = I.PROJ.F, sl = I.PROJ.TH / I.PROJ.TW, corner = I.P(F, F);
-      const bot = SCREEN_H - 8, bw = 68, bh0 = 64, footer = 28, gap = 8;
+      // bot поднят над самым низом канваса на AD_BANNER_H — освобождает
+      // полосу под будущий нижний рекламный баннер (drawAdBanner). Кнопки и
+      // панели инвентаря/запасов подстраиваются под новый bot сами (вся
+      // геометрия ниже посчитана от него), сцену (I.PROJ/layoutBounds) это
+      // не задевает — та завязана на SCREEN_H напрямую, не на panelGeo.
+      const bot = SCREEN_H - 8 - AD_BANNER_H, bw = 68, bh0 = 64, footer = 28, gap = 8;
       const padBtn = 8, padList = 36;
       const iconH = bh0 * 0.30 * 1.6;
       const fit = min => clamp(bot - footer - (corner[1] + gap), min, bh0);
@@ -43,6 +48,7 @@
     drawUI() {
       const g = this.gUI; g.clear(); this.tUI.begin();
       this.drawHUD(g);
+      this.drawAdBanner(g);
 
       const listOnR = this.mode === 'inventory' || this.mode === 'supplies';
       this.drawButtons(g, this.ui.L, [
@@ -110,6 +116,18 @@
       g.fillStyle(COL.chalk, 0.08); g.fillRoundedRect(fr.x, fr.y, fr.w, fr.h, 8);
       g.lineStyle(1.2, COL.chalk, 0.35); g.strokeRoundedRect(fr.x, fr.y, fr.w, fr.h, 8);
       this.tUI.put(fr.x + fr.w / 2, fr.y + fr.h / 2, document.fullscreenElement ? '⤡' : '⤢', 14, '#EBE2D5cc', 'center');
+    },
+
+    // Полоса под нижний рекламный баннер — во всю ширину канваса, у самого
+    // низа экрана, под кнопками панелей (см. AD_BANNER_H, render/constants.js
+    // и bot в panelGeo — кнопки подвинуты выше ровно на эту высоту). Пока
+    // рекламный SDK не подключён — просто размеченное место, поверх ничего не
+    // рисуется, кроме пустой сцены (I.PROJ) её не задевает.
+    drawAdBanner(g) {
+      const h = AD_BANNER_H, y = SCREEN_H - h;
+      g.fillStyle(COL.deep, 0.9); g.fillRect(0, y, SCREEN_W, h);
+      g.lineStyle(1, COL.chalk, 0.18); g.lineBetween(0, y, SCREEN_W, y);
+      this.tUI.put(SCREEN_W / 2, y + h / 2, 'место для баннера', 10, '#EBE2D544', 'center');
     },
 
     fullscreenBtnRect() { return { x: 504, y: 42, w: 28, h: 28 }; },
