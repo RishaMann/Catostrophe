@@ -12,8 +12,8 @@
 
   const I = window.ISO;
   const { SCREEN_W, SCREEN_H } = I;
-  const { DEBUG, CAT_ART_SCALE_BASE, BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, CEIL_DEPTH, UI_DEPTH, UI_TEXT_DEPTH } = window.RCFG;
-  const { TextPool, catFrameNames } = window.GUTIL;
+  const { DEBUG, CAT_ART_SCALE_BASE, BG_DEPTH, SHELL_DEPTH, ZONE_DEPTH, SHADOW_DEPTH, GLOW_DEPTH, TEXT_DEPTH, CEIL_DEPTH, UI_DEPTH, UI_TEXT_DEPTH, BANNER_ROTATE_MS, SAVE_INTERVAL_MS } = window.RCFG;
+  const { TextPool, catFrameNames, clamp } = window.GUTIL;
 
   /* ======================================================================== */
   class RoomScene extends Phaser.Scene {
@@ -162,6 +162,14 @@
       this.assetDebug = false;
       this.geoSelected = null;
       this.geoDragTarget = null;
+      // Панель «Отладки предметов» — таскается за шапку (geoPanelHeaderRect,
+      // выставляется в drawGeoPanel) независимо от выбранного ассета: по
+      // умолчанию она в левом верхнем углу и может закрывать сам предмет,
+      // который редактируют (особенно на потолке/дальней стене). Позиция
+      // держится на сцене (не сбрасывается при закрытии/открытии режима) —
+      // это просто расположение окна, а не часть правки геометрии ассета.
+      this.geoPanelPos = { x: 24, y: 108 };
+      this.geoPanelDrag = null;
       this.geoShowFrames = false;
       this.geoSaveFlashUntil = 0; // «вспышка» на кнопке Save после сохранения
       this.drag = null;
@@ -169,6 +177,30 @@
       this.openingDrag = null; // 'door' | 'window' | null — см. dragOpening()
       this.uiDirty = true;
       this.shellDirty = true;
+      // Ротация нижней полосы (bannerSlides/drawBannerStrip, ui/hud.js) —
+      // индекс текущего слайда и время последнего переключения (в
+      // Phaser-времени update(time), не Date.now() — тот же таймлайн, что и
+      // остальной игровой цикл). Слайд 0 — первая подсказка сразу при
+      // запуске, не реклама и не пустая полоса.
+      this.bannerSlideIdx = 0;
+      this.bannerSlideAt = 0;
+      // Активная кампания Promotion на текущем рекламном слайде (см.
+      // advanceBannerSlide, ui/hud.js) — null, если сейчас подсказка или
+      // рекламный слот пуст (Promotion выключен/ещё в первой задержке).
+      this._activePromo = null;
+      this._lastPromoId = null;
+      this.bannerMainRect = null; // хит-зона основного клика по Promotion
+      this.bannerInfoRect = null; // хит-зона ⓘ
+      this.promoInfoOpen = false;
+      this.promoInfoPromo = null; // снимок кампании на момент клика по ⓘ — см. input.js/drawPromoInfoPanel
+      this.promoInfoPanelRect = null;
+      this.saveAt = 0; // таймер автосохранения (SAVE_INTERVAL_MS), см. update()
+
+      // Сохранённое состояние (save.js) накатывается ПОСЛЕ дефолтов сцены
+      // (this.st/mood/fish/gems/catCharacter/lightsOn/lampOn выше), но ДО
+      // catImg ниже — тот читает activeCatConfig(), которая смотрит на
+      // this.catCharacter.
+      this.loadSavedState();
 
       // --- слои: фон-панорама, оболочка сцены, подсветка пустых зон при
       // драге, кот, пул предметов (по одному Graphics+Text на занятую зону),
@@ -235,6 +267,11 @@
       this.itemGfx = new Map(); // zid/iid -> { g: Graphics, t: Text|null, img: Image|null }
       this.gUI = this.add.graphics().setDepth(UI_DEPTH);
       this.tUI = new TextPool(this, UI_TEXT_DEPTH);
+      // Текст панели ⓘ Promotion (drawPromoInfoPanel, ui/hud.js) — отдельный
+      // Text, не через TextPool: ему одному в интерфейсе нужен wordWrap
+      // (длинный infoText, а не однострочные ярлыки панелей), TextPool на
+      // это не рассчитан.
+      this.promoInfoText = this.add.text(0, 0, '', {}).setDepth(UI_TEXT_DEPTH).setVisible(false);
 
       this.rebuild();
       this.layoutBackground();
@@ -244,8 +281,25 @@
       // сразу по клику.
       document.addEventListener('fullscreenchange', () => { this.uiDirty = true; });
 
+      // Сохранение на скрытие вкладки/сворачивание — надёжнее, чем только
+      // beforeunload (мобильные браузеры и Telegram WebView его не всегда
+      // успевают отработать при сворачивании, а не закрытии); beforeunload
+      // оставлен как второй, для обычной десктопной вкладки.
+      document.addEventListener('visibilitychange', () => { if (document.hidden) this.saveGame(); });
+      window.addEventListener('beforeunload', () => this.saveGame());
+
       this.input.on('pointerdown', p => this.onDown(p));
       this.input.on('pointermove', p => {
+        // Перетаскивание самой панели «Отладки предметов» за шапку — раньше
+        // anchor/sort-хэндла и обычного drag: пока панель едет, ничего
+        // другого палец сделать не пытается.
+        if (this.geoPanelDrag) {
+          const x = clamp(p.worldX - this.geoPanelDrag.dx, 0, SCREEN_W - 60);
+          const y = clamp(p.worldY - this.geoPanelDrag.dy, 0, SCREEN_H - 60);
+          this.geoPanelPos.x = x; this.geoPanelPos.y = y;
+          this.uiDirty = true;
+          return;
+        }
         // Перетаскивание anchor/sort-хэндла в «Отладке предметов» —
         // приоритет выше обычного drag: это отдельный ввод поверх сцены,
         // не связан с this.drag (перенос мебели) вообще.
@@ -257,6 +311,7 @@
         }
       });
       this.input.on('pointerup', p => {
+        if (this.geoPanelDrag) { this.geoPanelDrag = null; return; }
         if (this.geoDragTarget) { this.geoEndDrag(); return; }
         if (this.openingDrag) { this.openingDrag = null; return; }
         this.onUp(p);
@@ -311,6 +366,35 @@
       this.drawZoneOverlay();
       this.updateCatVisual();
       this.updateRain(time);
+      // Ротация нижней полосы (bannerSlides/drawBannerStrip, ui/hud.js) — раз
+      // в BANNER_ROTATE_MS сдвигаем слайд и просим перерисовать UI. Заход
+      // именно НА рекламный слайд — единственный момент, когда стоит слать
+      // цель в Метрику: drawUI() дальше может перерисоваться много раз без
+      // смены слайда (любой другой uiDirty, например открыли инвентарь), и
+      // цель не должна дублироваться на каждый такой лишний кадр.
+      if (this.promoInfoOpen) {
+        // Панель ⓘ открыта — лента на паузе: держим bannerSlideAt свежим
+        // каждый кадр, чтобы окно BANNER_ROTATE_MS не копилось в фоне, пока
+        // панель открыта (иначе, стоит её закрыть, лента тут же перескочила
+        // бы на несколько слайдов вперёд разом). Возобновление — в
+        // closePromoInfoPanel() (ui/hud.js), не тут.
+        this.bannerSlideAt = time;
+      } else if (time - this.bannerSlideAt >= BANNER_ROTATE_MS) {
+        this.bannerSlideAt = time;
+        // Сам переход + метрика показа слота/Promotion — в advanceBannerSlide
+        // (ui/hud.js): он же решает, есть ли сейчас право показать Promotion
+        // (firstLaunchDelay/enabled), и умеет пропустить пустой рекламный
+        // слот дальше к следующей подсказке, не оставляя дыру в ленте.
+        this.advanceBannerSlide();
+        this.uiDirty = true;
+      }
+      // Автосохранение (save.js) — раз в SAVE_INTERVAL_MS, тем же таймлайном
+      // update(time), что и ротация полосы выше; на скрытие/закрытие вкладки
+      // сохранение происходит отдельно (см. visibilitychange/beforeunload).
+      if (time - this.saveAt >= SAVE_INTERVAL_MS) {
+        this.saveAt = time;
+        this.saveGame();
+      }
       if (this.uiDirty === undefined) this.uiDirty = true;
       // mode==='characters' перерисовывается каждый кадр не из-за uiDirty —
       // превью крутится по времени (catPreviewFrameName), не по событию.
@@ -328,6 +412,7 @@
     window.MIXIN_CAT_APPEARANCE,
     window.MIXIN_CAT_BEHAVIOR,
     window.MIXIN_HUD,
+    window.MIXIN_SAVE,
     window.MIXIN_ASSET_GEO_EDITOR,
     window.MIXIN_INPUT
   );

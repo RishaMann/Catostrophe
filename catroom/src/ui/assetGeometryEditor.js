@@ -27,16 +27,38 @@
   root.MIXIN_ASSET_GEO_EDITOR = {
 
     // Что вообще можно выбрать для редактирования прямо сейчас — кот (пока в
-    // комнате) и коробка (если она поставлена). Список пуст, если предмета
-    // сейчас нет в сцене — тогда его просто нечего показывать/тапать.
+    // комнате) и ЛЮБОЙ реально поставленный предмет со спрайтом (пол/стена/
+    // потолок), см. AssetGeometry.FURNITURE_ITEMS — тот же признак, что
+    // включает честную anchor-геометрию при рендере (room/itemsRender.js), а
+    // не отдельный список тут: раскатали на все объекты один раз, дальше
+    // каждый новый предмет с картинкой в Furniture/manifest.json появляется
+    // в редакторе сам, без правок этого файла. band различает три разные
+    // системы позиционирования (floor: st.floor[iid]; wall: st.place[zid] по
+    // зоне; ceil: единственный st.place.CEIL) — geoLogicalWorldPoint/
+    // geoImageObject/geoCurrentState ниже читают его, чтобы знать, откуда
+    // брать позицию/картинку/state для каждого band'а.
     geoTargets() {
-      const out = [];
+      const out = [], AG = root.AssetGeometry, F = I.PROJ.F;
       if (this.cat && this.catOn) {
-        out.push({ kind: 'cat', entityId: 'cat:' + this.catCharacter, iid: null, screen: I.P(this.cat.x, this.cat.y) });
+        out.push({ kind: 'cat', band: null, entityId: 'cat:' + this.catCharacter, iid: null, zid: null, screen: I.P(this.cat.x, this.cat.y) });
       }
-      if (this.st.floor.box) {
-        const pos = this.st.floor.box;
-        out.push({ kind: 'furniture', entityId: 'furn:box', iid: 'box', screen: I.P(pos.x, pos.y) });
+      Object.keys(this.st.floor).forEach(iid => {
+        if (!AG.FURNITURE_ITEMS.has(iid)) return;
+        const pos = this.st.floor[iid];
+        out.push({ kind: 'furniture', band: 'floor', entityId: 'furn:' + iid, iid, zid: null, screen: I.P(pos.x, pos.y) });
+      });
+      Object.keys(this.st.place).forEach(zid => {
+        if (zid === 'CEIL') return;
+        const iid = this.st.place[zid], z = this.zmap[zid];
+        if (!z || !AG.FURNITURE_ITEMS.has(iid)) return;
+        const isCurtain = iid === 'curtain' && (zid === 'WIN_ROD' || zid === 'WIN_FRAME');
+        const pts = isCurtain ? this.curtainPoly() : I.zonePoly(z, F);
+        out.push({ kind: 'furniture', band: 'wall', entityId: 'furn:' + iid, iid, zid, screen: I.centroid(pts) });
+      });
+      const ceilIid = this.st.place.CEIL;
+      if (ceilIid && AG.FURNITURE_ITEMS.has(ceilIid)) {
+        const L = this.st.light;
+        out.push({ kind: 'furniture', band: 'ceil', entityId: 'furn:' + ceilIid, iid: ceilIid, zid: 'CEIL', screen: I.P(L.x, L.y, I.WALL) });
       }
       return out;
     },
@@ -49,48 +71,73 @@
     // старое значение _lastCatFrame ещё один кадр, до следующего updateCatVisual.
     geoCurrentState(t) {
       if (t.kind === 'cat') return this.geoCatFrameOverride || this._lastCatFrame || this.activeCatConfig().sprites.idle;
-      const pos = this.st.floor[t.iid];
       const FS = root.FURN_SPRITES;
-      return (this.furnitureSprites && FS && FS.pickState(t.iid, pos.state)) || pos.state || 'new';
+      if (t.band === 'floor') {
+        const pos = this.st.floor[t.iid];
+        return (this.furnitureSprites && FS && FS.pickState(t.iid, pos.state)) || pos.state || 'new';
+      }
+      if (t.band === 'wall') {
+        const wanted = (this.st.placeState || {})[t.zid];
+        return (this.furnitureSprites && FS && FS.pickState(t.iid, wanted)) || wanted || 'new';
+      }
+      // ceil — единственный слот, без своего state (см. drawCeilInto).
+      return (this.furnitureSprites && FS && FS.pickState(t.iid, null)) || 'new';
     },
 
     // Живой Phaser Image текущего ассета — источник фактических visual bounds
-    // (getBounds()), не пересчитываем их тут заново.
+    // (getBounds()), не пересчитываем их тут заново. floor-предметы лежат в
+    // itemGfx по iid (см. rebuildItemGfx), wall/ceil — по zid зоны (включая
+    // 'CEIL'): один и тот же iid может стоять в разных зонах, а картинка в
+    // itemGfx привязана именно к занятому МЕСТУ, не к виду предмета.
     geoImageObject(t) {
       if (t.kind === 'cat') return this.catImg;
-      const entry = this.itemGfx.get(t.iid);
+      const key = t.band === 'floor' ? t.iid : t.zid;
+      const entry = this.itemGfx.get(key);
       return (entry && entry.img) || null;
     },
 
     // Логическая мировая точка (НЕ visual anchor) — та, что реально
     // используется движком для позиционирования/depth и НИКОГДА не должна
     // сдвигаться от правок в этом редакторе. У кота это cat.x/cat.y. У
-    // мебели — та же точка, что и в drawFloorItemInto (room/itemsRender.js):
-    // центр footprint'а (cx,cy) для предметов на AssetGeometry (сейчас —
-    // box, совпадает с тем, где itemShapes.js рисует процедурный силуэт), у
-    // остальных — середина переднего края (референсные фото сняты с
-    // фасада). Сознательно не вынесена в общую функцию с itemsRender.js: это
-    // чисто рендер-геометрия, не логика игры/пола (та остаётся в iso.js).
+    // floor-мебели — центр footprint'а (cx,cy), та же точка, что и в
+    // drawFloorItemInto (room/itemsRender.js) — совпадает с тем, где
+    // itemShapes.js рисует процедурный силуэт. У wall-предметов — центр
+    // decor-зоны (или фактического окна для шторы, см. isCurtain в
+    // drawWallItemInto/geoTargets — та же логика тут, экранные координаты
+    // уже готовы из zonePoly/curtainPoly). У ceil — точка крепления на
+    // потолке (drawCeilInto). Сознательно не вынесена в общую функцию с
+    // itemsRender.js: это чисто рендер-геометрия, не логика игры/пола (та
+    // остаётся в iso.js).
     geoLogicalWorldPoint(t) {
       if (t.kind === 'cat') return I.P(this.cat.x, this.cat.y);
-      const pos = this.st.floor[t.iid], it = D.ITEMS[t.iid];
-      if (root.AssetGeometry.FURNITURE_ITEMS.has(t.iid)) return I.P(pos.x, pos.y, 0);
-      const [w, d] = I.floorOrient(it, pos.x, pos.y);
-      const rot = pos.x <= pos.y, depFull = rot ? w : d;
-      const front = rot ? [pos.x + depFull / 2, pos.y] : [pos.x, pos.y + depFull / 2];
-      return I.P(front[0], front[1], 0);
+      if (t.band === 'floor') {
+        const pos = this.st.floor[t.iid];
+        return I.P(pos.x, pos.y, 0);
+      }
+      if (t.band === 'wall') {
+        const z = this.zmap[t.zid];
+        const isCurtain = t.iid === 'curtain' && (t.zid === 'WIN_ROD' || t.zid === 'WIN_FRAME');
+        const pts = isCurtain ? this.curtainPoly() : I.zonePoly(z, I.PROJ.F);
+        return I.centroid(pts);
+      }
+      // ceil
+      const L = this.st.light;
+      return I.P(L.x, L.y, I.WALL);
     },
 
-    // Контур footprint'а (логика, не картинка) — только у мебели, у кота
-    // отдельного footprint'а как у предмета нет (см. технический аудит).
+    // Контур footprint'а (логика, не картинка) — только у floor-мебели: у
+    // кота отдельного footprint'а как у предмета нет (см. технический
+    // аудит), у wall/ceil — своя decor-зона/крепление уже видны как контур
+    // (см. drawAssetGeometryOverlay), отдельный «footprint» для них не
+    // определён.
     geoFootprintPoly(t) {
-      if (t.kind === 'cat') return null;
+      if (t.band !== 'floor') return null;
       const pos = this.st.floor[t.iid], it = D.ITEMS[t.iid];
       return I.floorPoly(I.floorRect(it, pos.x, pos.y));
     },
 
     selectGeoTarget(t) {
-      this.geoSelected = { kind: t.kind, entityId: t.entityId, iid: t.iid };
+      this.geoSelected = { kind: t.kind, band: t.band, entityId: t.entityId, iid: t.iid, zid: t.zid };
       root.AssetGeometry.clearLive();
       this.geoDragTarget = null;
       this.geoCatFrameOverride = null;
@@ -255,9 +302,18 @@
       const sel = this.geoSelected;
       const keys = this.geoAvailableStates(sel);
       if (keys.length < 2) return;
-      const pos = this.st.floor[sel.iid];
       const idx = keys.indexOf(this.geoCurrentState(sel));
-      pos.state = keys[(idx + 1) % keys.length];
+      const next = keys[(idx + 1) % keys.length];
+      // Мутация — та же, что у обычного тапа по предмету (input.js): floor
+      // хранит state прямо в позиции (st.floor[iid].state), wall/ceil — в
+      // st.placeState[zid] по занятой зоне. У ceil своего state нет вообще
+      // (drawCeilInto всегда зовёт FS.pickState(iid, null)) — кнопка для
+      // него и не показывается (geoAllStateKeys не про band, а про
+      // FS.states(iid); чтобы не плодить лишнюю ветку — просто ничего не
+      // трогаем, если band не floor/wall).
+      if (sel.band === 'floor') this.st.floor[sel.iid].state = next;
+      else if (sel.band === 'wall') this.st.placeState[sel.zid] = next;
+      else return;
       root.AssetGeometry.clearLive();
       this.geoDragTarget = null;
       this.rebuildItemGfx();
@@ -267,16 +323,27 @@
     drawAssetGeometryOverlay(g) {
       if (!this.assetDebug) { this.geoOnionImgs.forEach(im => im.setVisible(false)); return; }
 
+      // Кружки-цели/хэндлы/крестик/footprint имеют смысл только поверх самой
+      // комнаты (mode==='view') — тап по ним и так работает лишь тогда (см.
+      // onDown), а с открытой другой панелью (Настройки, Инвентарь...) они
+      // просто вылезали поверх неё, хотя нажать всё равно было нельзя. Сама
+      // панель редактора (drawGeoPanel — крестик, шапка-таскалка, Save/
+      // Reset) остаётся отдельным слоем и рисуется всегда, с последним
+      // валидным выбором, чтобы не мигать при переключении панелей.
+      const inScene = this.mode === 'view';
       const targets = this.geoTargets();
-      targets.forEach(t => {
-        const on = this.geoSelected && this.geoSelected.entityId === t.entityId;
-        g.lineStyle(1.4, on ? COL.amber : COL.chalk, on ? 0.9 : 0.45);
-        g.strokeCircle(t.screen[0], t.screen[1], 8);
-      });
+      if (inScene) {
+        targets.forEach(t => {
+          const on = this.geoSelected && this.geoSelected.entityId === t.entityId;
+          g.lineStyle(1.4, on ? COL.amber : COL.chalk, on ? 0.9 : 0.45);
+          g.strokeCircle(t.screen[0], t.screen[1], 8);
+        });
+      }
 
-      if (!this.geoSelected || !targets.some(t => t.entityId === this.geoSelected.entityId)) {
+      const selValid = this.geoSelected && targets.some(t => t.entityId === this.geoSelected.entityId);
+      if (!inScene || !selValid) {
         this.geoOnionImgs.forEach(im => im.setVisible(false));
-        this.drawGeoPanel(g, null);
+        this.drawGeoPanel(g, selValid ? this.geoSelected : null);
         return;
       }
       const sel = this.geoSelected;
@@ -363,22 +430,28 @@
       if (sel && sel.kind === 'cat') { rows += allKeys0.length > 1 ? 1 : 0; rows += 1; /* frames toggle */ }
       else if (allKeys0.length > 1) { rows += 1; /* state cycle */ }
       const hasChkRow = sel && ((sel.kind === 'cat') || allKeys0.length > 1);
-      const S = { x: 24, y: 108, w: 300, h: !sel ? 60 : 96 + rows * 38 + (hasChkRow ? 34 : 0) + 64 };
+      const S = { x: this.geoPanelPos.x, y: this.geoPanelPos.y, w: 300, h: !sel ? 60 : 96 + rows * 38 + (hasChkRow ? 34 : 0) + 64 };
       g.fillStyle(COL.panel, 0.95); g.fillRoundedRect(S.x, S.y, S.w, S.h, 10);
       g.lineStyle(1.1, COL.amber, 0.75); g.strokeRoundedRect(S.x, S.y, S.w, S.h, 10);
+      // Шапка — вся полоса заголовка (за вычетом крестика) — то, за что
+      // панель таскают по экрану (см. game.js: geoPanelDrag). Панель по
+      // умолчанию встаёт в левый верхний угол и может закрыть собой сам
+      // редактируемый предмет (особенно на потолке/дальней стене) — раньше
+      // подвинуть её было нечем.
+      const cs = 22;
+      this.geoPanelHeaderRect = { x: S.x, y: S.y, w: S.w - cs - 12, h: 30 };
       this.tUI.put(S.x + 12, S.y + 16, 'Отладка предметов', 10, '#E8A33D');
 
       // Крестик — закрыть окно, полностью выключив режим (не просто снять
       // выбор): та же кнопка, что и тумблер в Настройках, для симметрии с
       // остальными панелями (у них тоже «× закрыть» в углу).
-      const cs = 22;
       this.geoCloseBtn = { x: S.x + S.w - cs - 8, y: S.y + 7, w: cs, h: cs };
       g.fillStyle(COL.chalk, 0.08); g.fillRoundedRect(this.geoCloseBtn.x, this.geoCloseBtn.y, cs, cs, 6);
       g.lineStyle(1, COL.chalk, 0.32); g.strokeRoundedRect(this.geoCloseBtn.x, this.geoCloseBtn.y, cs, cs, 6);
       this.tUI.put(this.geoCloseBtn.x + cs / 2, this.geoCloseBtn.y + cs / 2, '×', 13, '#E8A33Dcc', 'center');
 
       if (!sel) {
-        this.tUI.put(S.x + 12, S.y + 38, 'Тапните кота или коробку', 9.5, '#EBE2D5aa');
+        this.tUI.put(S.x + 12, S.y + 38, 'Тапни по точке на персонаже или объекте для редактирования', 9.5, '#EBE2D5aa');
         this.geoBtns = []; this.geoFramesBtn = null; this.geoStateBtn = null;
         this.geoCatFrameBtn = null; this.geoMoveChk = null; this.geoApplyAllChk = null;
         return;

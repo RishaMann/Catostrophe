@@ -44,6 +44,22 @@
       this.drawLighting();
     },
 
+    // «Убрать мебель» (Настройки) — вся расставленная мебель разом уходит
+    // обратно в инвентарь: тем же способом, что и одиночная перестановка
+    // (delete из st.floor/st.place) — список «что доступно поставить»
+    // строится от обратного, весь каталог минус занятое (см. listSource,
+    // ui/hud.js), отдельного стока для «убранного» не нужно. CEIL не
+    // трогаем — потолочный светильник не съёмная мебель, а часть комнаты
+    // (drawCeilInto не переживает пустой st.place.CEIL); его гэг-состояние
+    // (люстра после гэга) тоже сохраняем.
+    clearAllFurniture() {
+      const ceilState = this.st.placeState.CEIL;
+      this.st.floor = {};
+      Object.keys(this.st.place).forEach(zid => { if (zid !== 'CEIL') delete this.st.place[zid]; });
+      this.st.placeState = ceilState !== undefined ? { CEIL: ceilState } : {};
+      this.rebuild();
+    },
+
     /* ---------- общий помощник отрисовки многоугольника на произвольный Graphics ---------- */
     polyOn(g, pts, fill, fa, stroke, sw, close) {
       const p = pts.map(a => ({ x: a[0], y: a[1] }));
@@ -81,6 +97,33 @@
     },
     hitDoor(x, y) { return inPoly([x, y], this.doorPoly()); },
     hitWindow(x, y) { return inPoly([x, y], this.winPoly()); },
+
+    // Окно как ДВЕ стеклянные секции + перекладина между ними (room/
+    // pixelEffects.js: paintWindowBeam света и updateRain дождя используют
+    // именно эту геометрию, не единый winPoly() — тот остаётся только для
+    // хит-теста/подписи «окно» в drawShell). lat0/lat1 — координата вдоль
+    // окна в тех же мировых единицах, что st.win.pos (мировая x при
+    // side='right', мировая y при side='frontRight') — то же значение, что
+    // подставляется в I.P(lat,0,z)/I.P(F,lat,z) для отрисовки.
+    winGlassSegments() {
+      const w0 = this.st.win.pos, w1 = w0 + WIN_W;
+      const gap = root.PFX.CONFIG.lighting.window.mullionGap;
+      const mid = (w0 + w1) / 2;
+      return [
+        { side: this.st.win.side, lat0: w0, lat1: mid - gap / 2 },
+        { side: this.st.win.side, lat0: mid + gap / 2, lat1: w1 }
+      ];
+    },
+
+    // Экранные полигоны обеих стеклянных секций (для рейн-маски и
+    // showWindowMask) — та же геометрия, что winPoly(), но по отдельности на
+    // каждую половину и с зазором под перекладину вместо сплошной рамы.
+    winGlassPolys() {
+      const F = I.PROJ.F;
+      return this.winGlassSegments().map(seg => seg.side === 'right'
+        ? [I.P(seg.lat0, 0, WIN_Z0), I.P(seg.lat1, 0, WIN_Z0), I.P(seg.lat1, 0, WIN_Z1), I.P(seg.lat0, 0, WIN_Z1)]
+        : [I.P(F, seg.lat0, 0.08), I.P(F, seg.lat1, 0.08), I.P(F, seg.lat1, STUB), I.P(F, seg.lat0, STUB)]);
+    },
 
     // Габарит для спрайта шторы (room/itemsRender.js: drawWallItemInto) — НЕ
     // зона WIN_ROD/WIN_FRAME (те — тонкие полоски под карниз/раму, вписанная
@@ -126,29 +169,65 @@
     },
     // Обновляется каждый кадр (game.js: update()), не из rebuild() — сам
     // дождь должен идти непрерывно, а не перерисовываться только по
-    // событию постановки предмета. Маска — geometry mask по фактическому
-    // стеклу (winPoly, НЕ curtainPoly — та шире, вся штора целиком, дождь же
-    // должен остаться в пределах именно стекла).
+    // событию постановки предмета. Маска — geometry mask по ОБЕИМ стеклянным
+    // секциям (winGlassPolys, room/room/shell.js выше), НЕ по единому
+    // winPoly/curtainPoly — так центральная перекладина и рама реально
+    // перекрывают дождь, а не только штора целиком.
+    //
+    // Капли — пиксельные кластеры (короткие вертикальные столбики из
+    // PFX.CONFIG.scale-квадратов, не anti-aliased линии), с целочисленным
+    // покадровым шагом (throttle до rain.fps, не честные 60 FPS — п.6 ТЗ:
+    // «без interpolation, без subpixel motion»), пул частиц переиспользуется
+    // между кадрами (this._rain), а не создаётся заново.
     updateRain(time) {
-      const visible = this.rainVisible();
+      const cfg = root.PFX.CONFIG.rain;
+      const visible = this.rainVisible() && cfg.enabled;
       this.gRain.setVisible(visible);
       if (!visible) return;
-      const pts = this.winPoly();
+
+      const stepMs = 1000 / cfg.fps;
+      if (this._rainLastTick !== undefined && time - this._rainLastTick < stepMs) return;
+      this._rainLastTick = time;
+
+      const scale = root.PFX.CONFIG.scale;
+      const polys = this.winGlassPolys();
       this.gRainMask.clear();
       this.gRainMask.fillStyle(0xffffff, 1);
-      this.gRainMask.fillPoints(pts.map(p => ({ x: p[0], y: p[1] })), true);
-      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      polys.forEach(pts => this.gRainMask.fillPoints(pts.map(p => ({ x: p[0], y: p[1] })), true));
+
+      const xs = polys.flat().map(p => p[0]), ys = polys.flat().map(p => p[1]);
       const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-      const w = x1 - x0, h = y1 - y0;
+      const w = Math.max(scale, x1 - x0), h = Math.max(scale, y1 - y0);
+
+      if (!this._rain) {
+        const spawn = (layerCfg, layer) => Array.from({ length: layerCfg.count }, (_, i) => ({
+          layer, seed: i * 97.13 + layer * 31,
+          speed: layerCfg.speedMin + (i % 7) / 6 * (layerCfg.speedMax - layerCfg.speedMin),
+          h: layerCfg.hMin + (i % 5) / 4 * (layerCfg.hMax - layerCfg.hMin)
+        }));
+        this._rain = { bg: spawn(cfg.bg, 'bg'), fg: spawn(cfg.fg, 'fg') };
+      }
+
       const g = this.gRain;
       g.clear();
-      g.lineStyle(1.3, 0xBFD9F2, 0.5);
-      const N = 16;
-      for (let i = 0; i < N; i++) {
-        const speed = 70 + (i % 5) * 22; // разный темп капель — не «строем»
-        const x = x0 + ((i * 53.7) % Math.max(1, w));
-        const y = y0 - 12 + ((time * speed * 0.001 + i * 61) % (h + 24));
-        g.lineBetween(x, y, x, y + 11); // строго вертикально, без сноса по x
+      const drawLayer = (drops, layerCfg) => {
+        g.fillStyle(layerCfg.color, layerCfg.alpha);
+        drops.forEach(d => {
+          const cellW = Math.max(1, Math.round(w / scale));
+          const gx = Math.floor(x0 / scale) + (Math.floor(d.seed * 53.7) % cellW);
+          const totalH = h + d.h * scale + scale;
+          const fall = Math.floor((time * d.speed * 0.001 + d.seed * 61) % totalH);
+          const sy = Math.floor(y0 / scale) - Math.ceil(d.h) + Math.floor(fall / scale);
+          const sx = gx * scale;
+          g.fillRect(sx, sy * scale, layerCfg.w * scale, d.h * scale);
+        });
+      };
+      drawLayer(this._rain.bg, cfg.bg);
+      drawLayer(this._rain.fg, cfg.fg);
+
+      if (this.pfxDebug) {
+        g.lineStyle(1, 0xFF4D4D, 0.9);
+        polys.forEach(pts => g.strokePoints(pts.map(p => ({ x: p[0], y: p[1] })), true));
       }
     },
 
