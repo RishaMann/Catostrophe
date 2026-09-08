@@ -296,12 +296,19 @@
         const baseScale = Math.min(bw / contentW, bh / contentH) * (isCurtain ? 1 : 0.96);
         if (fallen) {
           const fp = this.wallFloorAnchor(zid);
+          // Лежит на полу — глубина должна сравниваться с реальной floor-
+          // мебелью (I.floorDepth = x+y мировых координат), а не с
+          // «глубиной» стенной decor-зоны (та вообще не про позицию: у
+          // wall-band r[1]/r[3] — диапазон ВЫСОТЫ на стене, не y на полу, и
+          // могла случайно давать то похожую, то совсем чужую шкалу).
+          const mid = (z.r[0] + z.r[2]) / 2;
+          const fallDepth = z.wall === 'right' ? mid : z.wall === 'frontRight' ? F + mid : mid;
           entry.img.setOrigin(0.5, 1);
           entry.img.setTexture(key).setVisible(true)
             .setScale(baseScale * geo.scaleMul)
             .setPosition(fp[0], fp[1])
             .setAngle(z.wall === 'right' ? -65 : 65)
-            .setDepth(I.depth(this.zmap, zid) + 0.5)
+            .setDepth(fallDepth + 0.001)
             .setFlipX(false);
         } else {
           entry.img.setAngle(0);

@@ -324,6 +324,36 @@
         }
       }
 
+      // Тап по портрету — падает вдоль стены до пола и остаётся наискось,
+      // повторный тап — возвращается на место (this.st.placeState[zid] =
+      // 'fallen'/'new', см. drawWallItemInto в room/itemsRender.js —
+      // трансформ, не смена картинки, там же и формула для обеих точек).
+      // Мгновенно, без анимации падения — тот же уровень проработки, что у
+      // гэга шторы/коробки выше (тоже мгновенный toggle).
+      if (this.mode === 'view' && !this.drag) {
+        const portraitZid = Object.keys(this.st.place).find(zid => this.st.place[zid] === 'portrait');
+        const z = portraitZid && this.zmap[portraitZid];
+        if (z) {
+          const wanted = (this.st.placeState || {})[portraitZid];
+          const fallen = wanted === 'fallen';
+          // Хват — по decor-зоне на стене, пока висит; по кругу вокруг той
+          // же точки на полу, куда «упал» (wallFloorAnchor), когда лежит —
+          // иначе после падения по нему нельзя тапнуть обратно.
+          let hit;
+          if (fallen) {
+            const fp = this.wallFloorAnchor(portraitZid);
+            hit = Math.hypot(x - fp[0], y - fp[1]) < 45;
+          } else {
+            hit = inPoly([x, y], I.zonePoly(z, I.PROJ.F));
+          }
+          if (hit) {
+            this.st.placeState[portraitZid] = fallen ? 'new' : 'fallen';
+            this.rebuildItemGfx();
+            return;
+          }
+        }
+      }
+
       // тап по коту — погладить (не «поиграть игрушкой», для этого нужно
       // донести игрушку из «Запасов», см. resolveSupplyDrop)
       const cp = I.P(this.cat.x, this.cat.y);
