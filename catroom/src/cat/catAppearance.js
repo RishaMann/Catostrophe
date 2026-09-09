@@ -27,15 +27,39 @@
     // только решает, куда на СПРАЙТЕ поставить уже готовую мировую точку.
     catSequenceFor(sprites, frameName) {
       const w = sprites.walk;
-      if (!w) return null;
-      if (Array.isArray(w)) return w.includes(frameName) ? { id: `cat:${this.catCharacter}:walk`, frames: w } : null;
-      // 8-directional формат (Cats/Labra) — своя последовательность на
-      // каждое направление, они не обязаны иметь общую reference-точку
-      // (разные ракурсы тела).
-      for (const dir of Object.keys(w)) {
-        if (w[dir].frames && w[dir].frames.includes(frameName)) {
-          return { id: `cat:${this.catCharacter}:walk:${dir}`, frames: w[dir].frames };
+      if (w) {
+        if (Array.isArray(w)) {
+          if (w.includes(frameName)) return { id: `cat:${this.catCharacter}:walk`, frames: w };
+        } else {
+          // 8-directional формат (Cats/Labra) — своя последовательность на
+          // каждое направление, они не обязаны иметь общую reference-точку
+          // (разные ракурсы тела).
+          for (const dir of Object.keys(w)) {
+            if (w[dir].frames && w[dir].frames.includes(frameName)) {
+              return { id: `cat:${this.catCharacter}:walk:${dir}`, frames: w[dir].frames };
+            }
+          }
         }
+      }
+      // Покадровые анимации (playToy1/playToy2/playFed/playIdle — see
+      // updateCatVisual/petCat/playHand) — та же проблема, что у walk без
+      // sequenceReference: каждый из ~38 кадров резался независимо, свой
+      // альфа-bottom-center на кадр даёт заметное «шатание» из стороны в
+      // сторону при покадровой смене (не только по X — от кадра к кадру
+      // могла плавать и высота). Раньше catSequenceFor знал только про
+      // sprites.walk — эти сегменты вообще не попадали под медиану.
+      // {frames,count} — префикс + порядковый номер, не готовый список имён,
+      // разворачиваем в него же, чтобы отдать sequenceReference тот же
+      // формат frameTextureKeys, что и для walk.
+      for (const key of ['playToy1', 'playToy2', 'playFed', 'playIdle']) {
+        const seg = sprites[key];
+        if (!seg || !seg.frames || !seg.count) continue;
+        const isMatch = frameName.lastIndexOf(seg.frames + '_', 0) === 0
+          && Number.isInteger(+frameName.slice(seg.frames.length + 1))
+          && +frameName.slice(seg.frames.length + 1) < seg.count;
+        if (!isMatch) continue;
+        const frames = Array.from({ length: seg.count }, (_, i) => seg.frames + '_' + i);
+        return { id: `cat:${this.catCharacter}:${key}`, frames };
       }
       return null;
     },

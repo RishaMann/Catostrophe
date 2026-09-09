@@ -178,15 +178,19 @@
     return autoFromAlpha(alphaBoundsOf(textureKey, img));
   }
 
-  // Кот: если frameKey входит в последовательность (walk-цикл) — берём НЕ
-  // собственный alpha bottom/center этого кадра, а МЕДИАНУ по всей
-  // последовательности (см. шапку файла: «sequence → общая reference
-  // geometry», не «каждый кадр свой центр»). Медиана, не среднее — устойчивее
-  // к одному кадру-выбросу (например, кадр с поднятой лапой/хвостом).
+  // Кот: если frameKey входит в последовательность (walk-цикл, покадровая
+  // анимация игры/еды) — берём НЕ собственный alpha bottom/center этого
+  // кадра, а МЕДИАНУ по всей последовательности (см. шапку файла: «sequence
+  // → общая reference geometry», не «каждый кадр свой центр»). Медиана, не
+  // среднее — устойчивее к одному кадру-выбросу (например, кадр с поднятой
+  // лапой/хвостом). Заодно и МАСШТАБ (medianH/thisFrameH, см. autoCat) — не
+  // только точка опоры плавала между независимо нарезанными кадрами, но и
+  // видимый размер (голова/тело крупнее-мельче кадр от кадра); нормируем к
+  // той же медианной высоте контента, что и anchor, тем же проходом.
   // sequenceFrames — все ключи текстур кадров цикла, приходят от вызывающего
-  // кода (catAppearance.js знает про sprites.walk), этот модуль про формат
-  // конфига персонажа ничего не знает.
-  const seqRefCache = new Map(); // sequenceId -> {ax, ay} (доли anchor)
+  // кода (catAppearance.js знает про sprites.walk/play*), этот модуль про
+  // формат конфига персонажа ничего не знает.
+  const seqRefCache = new Map(); // sequenceId -> {ax, ay, medianH, heights: Map(key->h)} | null
   function median(arr) {
     const a = arr.slice().sort((x, y) => x - y);
     const n = a.length;
@@ -194,7 +198,7 @@
   }
   function sequenceReference(sequenceId, frameTextureKeys, getImg) {
     if (seqRefCache.has(sequenceId)) return seqRefCache.get(sequenceId);
-    const axs = [], ays = [];
+    const axs = [], ays = [], heights = new Map();
     frameTextureKeys.forEach(key => {
       const img = getImg(key);
       if (!img) return;
@@ -202,8 +206,9 @@
       if (!ab) return;
       axs.push((ab.x0 + ab.x1) / 2 / ab.imgW);
       ays.push(ab.y1 / ab.imgH);
+      heights.set(key, ab.h);
     });
-    const ref = axs.length ? { ax: median(axs), ay: median(ays) } : null;
+    const ref = axs.length ? { ax: median(axs), ay: median(ays), medianH: median([...heights.values()]), heights } : null;
     seqRefCache.set(sequenceId, ref);
     return ref;
   }
@@ -213,7 +218,11 @@
     const base = autoFromAlpha(ab);
     if (sequenceId && frameTextureKeys && frameTextureKeys.length > 1) {
       const ref = sequenceReference(sequenceId, frameTextureKeys, getImg);
-      if (ref) base.anchor = { x: ref.ax, y: ref.ay };
+      if (ref) {
+        base.anchor = { x: ref.ax, y: ref.ay };
+        const h = ref.heights.get(textureKey);
+        if (h) base.scaleMul = ref.medianH / h;
+      }
     }
     return base;
   }
@@ -222,11 +231,15 @@
   // правка (getOverride) или null. Override побеждает целиком по полю: если
   // пользователь подвинул anchor в редакторе, auto для anchor больше не
   // используется, но offset/sortBias, которые он не трогал, остаются auto-0.
+  // scaleMul — то же самое, но с промежуточным auto-слоем (см. autoCat):
+  // ручной override.scaleMul, если он есть, побеждает; иначе — авто-поправка
+  // по sequence (синхронизация размера кадров walk/play*), иначе — 1.
   function resolve(auto, override) {
     const a = (override && override.anchor) || auto.anchor || DEFAULT_GEOMETRY.anchor;
     const o = (override && override.offset) || DEFAULT_GEOMETRY.offset;
     const sortBias = (override && typeof override.sortBias === 'number') ? override.sortBias : DEFAULT_GEOMETRY.sortBias;
-    const scaleMul = (override && typeof override.scaleMul === 'number') ? override.scaleMul : DEFAULT_GEOMETRY.scaleMul;
+    const scaleMul = (override && typeof override.scaleMul === 'number') ? override.scaleMul
+      : (typeof auto.scaleMul === 'number') ? auto.scaleMul : DEFAULT_GEOMETRY.scaleMul;
     return {
       originX: a.x, originY: a.y,
       offsetX: o.x, offsetY: o.y,
