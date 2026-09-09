@@ -165,17 +165,23 @@
 
       // настройки
       if (this.mode === 'settings') {
-        const S = { x: 24, y: 300, w: 492, h: 426 };
+        const S = { x: 24, y: 300, w: 492, h: 470 };
         if (x >= S.x + S.w - 80 && x <= S.x + S.w - 6 && y >= S.y + 10 && y <= S.y + 36) { this.setMode('view'); return; }
         const t = this.hitBtn(this.setBtns || [], x, y);
         if (t) {
           // Разовые действия (drawSettings, ui/hud.js) — не тумблеры this[k],
           // отдельная ветка вместо общего toggle ниже.
           if (t.k === 'clearFurniture') { this.clearAllFurniture(); this.uiDirty = true; return; }
-          if (t.k === 'resetRoomState') {
-            // Условия сброса ещё не определены (заказчик допишет позже) —
-            // кнопка уже кликабельна и даёт понятный отклик, а не молчит.
-            this.bubble('Скоро!');
+          if (t.k === 'character') { this.openCharacterPicker(); return; }
+          if (t.k === 'fullWipe') {
+            // Единственный способ вернуть игрока на CatSelect (см.
+            // save.js: getCatChoice/bootScene.js: goNext — пока catId
+            // сохранён, Boot туда не пускает). Удаляем весь сейв целиком
+            // (не только catId) и перезагружаем страницу — так проще и
+            // надёжнее, чем вручную откатывать состояние уже созданной
+            // сцены комнаты (мебель/кот/свет/настроение и т.д.).
+            if (root.SAVESTORE) root.SAVESTORE.clear();
+            location.reload();
             return;
           }
           this[t.k] = !this[t.k];
@@ -201,8 +207,10 @@
         if (x >= S.x && x <= S.x + S.w && y >= S.y && y <= S.y + S.h) return;
       }
 
-      // «Задания»/«Магазин» — та же геометрия панели, что у настроек
-      if (this.mode === 'quests' || this.mode === 'shop') {
+      // «Магазин» — та же геометрия панели, что у настроек. «Игра»
+      // (мини-игра) отдельным режимом не является — see ниже, кнопка сразу
+      // открывает overlay (src/minigame.js), не переключает mode.
+      if (this.mode === 'shop') {
         const S = this.placeholderRect || { x: 24, y: 300, w: 492, h: 180 };
         if (x >= S.x + S.w - 80 && x <= S.x + S.w - 6 && y >= S.y + 10 && y <= S.y + 36) { this.setMode('view'); return; }
         if (x >= S.x && x <= S.x + S.w && y >= S.y && y <= S.y + S.h) return;
@@ -275,11 +283,11 @@
         }
       }
       if (!listOnR) {
-        const idsR = ['quests', 'shop', 'character'];
-        for (let i = 0; i < 3; i++) {
+        const idsR = ['minigame', 'shop'];
+        for (let i = 0; i < idsR.length; i++) {
           const b = R.btn[i];
           if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
-            if (idsR[i] === 'character') { this.openCharacterPicker(); return; }
+            if (idsR[i] === 'minigame') { this.openMinigame(); return; }
             this.setMode(this.mode === idsR[i] ? 'view' : idsR[i]);
             return;
           }

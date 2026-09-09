@@ -19,22 +19,29 @@
   'use strict';
 
   const PIXEL_EFFECTS = {
-    scale: 4, // сторона "виртуального пикселя" в реальных px канваса (540x960)
+    // 2 px сохраняет жёсткую pixel-grid, но не превращает свет в мозаику.
+    // На референсах пиксельность живёт в тональной текстуре, а не в крупных
+    // квадратных блоках.
+    scale: 2,
 
     lighting: {
       enabled: true,
-      levels: 5,        // дискретных уровней яркости на диск лампы
+      levels: 6,
       dither: 'bayer4',
-      floorLamp: { alpha: 0.85 },
-      hangingLamp: { alpha: 0.85 },
-      garland: { alpha: 0.7, nodeCount: 4, nodeRadius: 0.55 },
-      window: { levels: 4, alpha: 0.55, color: 0x8FB6E8, depth: 3.0, spread: 1.2, mullionGap: 0.16 }
+      floorLamp: { alpha: 0.42, falloffPower: 1.65 },
+      hangingLamp: { alpha: 0.48, falloffPower: 1.45 },
+      garland: { alpha: 0.26, nodeCount: 7, nodeRadius: 0.28 },
+      window: {
+        levels: 6, alpha: 0.34, color: 0x7898BC,
+        start: 0.65, depth: 2.65, spread: 0.18, drift: 0.48,
+        falloffPower: 1.35, mullionGap: 0.18
+      }
     },
 
     shadows: {
       enabled: true,
       levels: 3,
-      maxAlpha: 0.4,
+      maxAlpha: 0.28,
       dominantLightOnly: true,
       furnitureReachMul: 0.6, // во сколько раз тень длиннее половины габарита предмета
       catLen: 0.55
@@ -43,8 +50,11 @@
     rain: {
       enabled: true,
       fps: 16,
-      bg: { count: 26, color: 0x4C6382, alpha: 0.5, w: 1, hMin: 2, hMax: 4, speedMin: 90, speedMax: 130 },
-      fg: { count: 12, color: 0xCFE3F7, alpha: 0.85, w: 2, hMin: 4, hMax: 8, speedMin: 150, speedMax: 210 }
+      // Пул считается по bbox окна, а затем режется двумя стеклянными
+      // масками; поэтому частиц нужно заметно больше, чем одновременно
+      // остаётся видимыми внутри узких секций.
+      bg: { count: 34, color: 0x587895, alpha: 0.46, w: 1, hMin: 2, hMax: 5, speedMin: 64, speedMax: 102 },
+      fg: { count: 15, color: 0xBDD8EE, alpha: 0.76, w: 1, hMin: 3, hMax: 7, speedMin: 112, speedMax: 168 }
     }
 
     // Отладочная подсветка (источники света/тени-кастеры/маска окна) — не
@@ -90,7 +100,7 @@
     // спроецированные (I.P) угловые точки мирового квадрата, описывающего
     // круг радиуса worldRadius — считает вызывающий код (там же, где и
     // I.P/I.unP уже под рукой через this.*).
-    paintFloorDisc(g, I, worldCx, worldCy, worldRadius, levels, color, maxAlpha) {
+    paintFloorDisc(g, I, worldCx, worldCy, worldRadius, levels, color, maxAlpha, falloffPower = 1.5) {
       const scale = PIXEL_EFFECTS.scale;
       const c00 = I.P(worldCx - worldRadius, worldCy - worldRadius);
       const c11 = I.P(worldCx + worldRadius, worldCy - worldRadius);
@@ -103,7 +113,7 @@
         for (let sx = x0; sx <= x1; sx += scale) {
           const w = I.unP(sx + scale / 2, sy + scale / 2);
           const dist = Math.hypot(w[0] - worldCx, w[1] - worldCy);
-          const t = 1 - dist / worldRadius;
+          const t = Math.pow(Math.max(0, 1 - dist / worldRadius), falloffPower);
           if (t <= 0) continue;
           const lvl = ditherLevel(levels, t, sx / scale, sy / scale);
           if (lvl <= 0) continue;
@@ -119,25 +129,28 @@
     // ярче у стекла, гаснет к depth, ограничен по lateral шириной сегмента
     // (уже без перекладины — её должен вырезать вызывающий код, передав
     // раздельно левый/правый сегмент).
-    paintWindowBeam(g, I, side, F, lat0, lat1, depth, spread, levels, color, maxAlpha) {
+    paintWindowBeam(g, I, side, F, lat0, lat1, start, depth, spread, drift, levels, color, maxAlpha, falloffPower = 1.35) {
       const scale = PIXEL_EFFECTS.scale;
       // bbox по экрану — по мировому прямоугольнику [lat0-spread..lat1+spread] x [0..depth]
       const corners = side === 'right'
-        ? [I.P(lat0 - spread, 0), I.P(lat1 + spread, 0), I.P(lat0 - spread, depth), I.P(lat1 + spread, depth)]
-        : [I.P(F, lat0 - spread), I.P(F, lat1 + spread), I.P(F - depth, lat0 - spread), I.P(F - depth, lat1 + spread)];
+        ? [I.P(lat0, start), I.P(lat1, start), I.P(lat0 + drift - spread, start + depth), I.P(lat1 + drift + spread, start + depth)]
+        : [I.P(F - start, lat0), I.P(F - start, lat1), I.P(F - start - depth, lat0 + drift - spread), I.P(F - start - depth, lat1 + drift + spread)];
       const xs = corners.map(p => p[0]), ys = corners.map(p => p[1]);
       const x0 = snap(Math.min(...xs), scale), x1 = snap(Math.max(...xs), scale);
       const y0 = snap(Math.min(...ys), scale), y1 = snap(Math.max(...ys), scale);
       for (let sy = y0; sy <= y1; sy += scale) {
         for (let sx = x0; sx <= x1; sx += scale) {
           const w = I.unP(sx + scale / 2, sy + scale / 2);
-          const d = side === 'right' ? w[1] : (F - w[0]);
+          const d = (side === 'right' ? w[1] : (F - w[0])) - start;
           const lat = side === 'right' ? w[0] : w[1];
           if (d < 0 || d > depth) continue;
           const tDepth = d / depth;
           const sp = spread * tDepth;
-          if (lat < lat0 - sp || lat > lat1 + sp) continue;
-          const t = 1 - tDepth;
+          const shift = drift * tDepth;
+          if (lat < lat0 + shift - sp || lat > lat1 + shift + sp) continue;
+          // Луч остаётся читаемым в дальней части, но не выглядит плоской
+          // синей заливкой у окна.
+          const t = Math.pow(1 - tDepth * 0.72, falloffPower);
           const lvl = ditherLevel(levels, t, sx / scale, sy / scale);
           if (lvl <= 0) continue;
           g.fillStyle(color, (lvl / levels) * maxAlpha);

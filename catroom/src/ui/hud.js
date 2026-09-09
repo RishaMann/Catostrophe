@@ -65,16 +65,15 @@
       if (listOnR) this.drawList(g, this.ui.R);
       else {
         this.invIconImgs.forEach(im => im.setVisible(false));
+        // Выбор персонажа переехал в «Настройки» (тестовый инструмент,
+        // Cats/manifest.json — Redfat/Siamese/Labra; Labra — только для
+        // тестов, в паре Батон/Шило не участвует) — тут больше не показывается.
         this.drawButtons(g, this.ui.R, [
-        { id: 'quests', l: 'Задания' }, { id: 'shop', l: 'Магазин' },
-        // Раньше «—» (заглушка) — теперь выбор персонажа: тап переключает на
-        // следующего по списку из Cats/manifest.json, подпись — имя текущего.
-        { id: 'character', l: this.activeCatConfig().name }
+        { id: 'minigame', l: 'Игра' }, { id: 'shop', l: 'Магазин' }
         ]);
       }
 
       if (this.mode === 'settings') this.drawSettings(g);
-      if (this.mode === 'quests') this.drawPlaceholderPanel(g, 'Задания');
       if (this.mode === 'shop') this.drawPlaceholderPanel(g, 'Магазин');
       if (this.mode === 'characters') this.drawCharacterPanel(g);
       else this.catPreviewImg.setVisible(false);
@@ -274,6 +273,24 @@
       this.promoInfoPanelRect = { x, y: panelY, w, h };
     },
 
+    // Открыть мини-игру (src/minigame.js) поверх канваса. Награда за заход
+    // (fishEarned, разница её собственного счётчика рыбок ДО/ПОСЛЕ, см.
+    // minigame-src/src/core/bridge.js) прилетает сюда один раз при выходе —
+    // добавляем рыбок 1:1 и поднимаем настроение (та же величина шага, что
+    // и у прочих действий с котом, cat/catBehavior.js: +5..+10), одной
+    // операцией с этим сохранением игры, не трогая localStorage мини-игры.
+    openMinigame() {
+      if (!root.CatMinigame) return;
+      root.CatMinigame.open(fishEarned => {
+        if (fishEarned > 0) {
+          this.fish += fishEarned;
+          this.mood = clamp(this.mood + Math.min(20, Math.round(fishEarned / 5)), 0, 100);
+          this.saveGame();
+        }
+        this.uiDirty = true;
+      });
+    },
+
     fullscreenBtnRect() { return { x: 504, y: 42, w: 28, h: 28 }; },
     hitFullscreenBtn(x, y) {
       const r = this.fullscreenBtnRect();
@@ -359,7 +376,7 @@
     },
 
     drawSettings(g) {
-      const S = { x: 24, y: 300, w: 492, h: 426 };
+      const S = { x: 24, y: 300, w: 492, h: 470 };
       g.fillStyle(COL.panel, 0.97); g.fillRoundedRect(S.x, S.y, S.w, S.h, 14);
       g.lineStyle(1.2, COL.chalk, 0.3); g.strokeRoundedRect(S.x, S.y, S.w, S.h, 14);
       this.tUI.put(S.x + 20, S.y + 28, 'Настройки', 11, '#EBE2D5');
@@ -443,14 +460,30 @@
         this.setBtns.push({ x: S.x + 20, y: pfxY, w: bgW, h: 36, k: 'pfxDebug' });
       }
 
-      // «Убрать мебель»/«Сбросить состояние комнаты» — не тумблеры (нет
-      // «включено», это разовые действия), поэтому не заливаются амбером и
-      // не читают this[k] для подписи — click-логика для них отдельная
-      // ветка в onDown (input.js), не общий toggle this[t.k] = !this[t.k].
-      // Пара в одну строку, как debug-тумблеры выше — экономит высоту
-      // панели под уже плотным списком настроек.
-      const actY = pfxY + 36 + 8, actW = (bgW - 12) / 2;
-      [['clearFurniture', 'Убрать мебель'], ['resetRoomState', 'Сбросить состояние комнаты']]
+      // Переключатель персонажа кота — временный тестовый инструмент (см.
+      // README/Cats/manifest.json: Redfat/Siamese/Labra). В релизной паре
+      // Батон/Шило игрок кота не выбирает вручную — сюда попадают только те,
+      // кто гоняет билд и хочет проверить всех троих, включая Labra, который
+      // в паре Батон/Шило вообще не участвует. Открывает ту же полноценную
+      // панель (drawCharacterPanel), что раньше висела кнопкой в нижнем
+      // меню — сюда её и убрали, чтобы не путать с игровым UI.
+      const charY = pfxY + 36 + 8;
+      g.fillStyle(COL.chalk, 0.06); g.fillRoundedRect(S.x + 20, charY, bgW, 36, 9);
+      g.lineStyle(1.1, COL.chalk, 0.28); g.strokeRoundedRect(S.x + 20, charY, bgW, 36, 9);
+      this.tUI.put(S.x + 20 + bgW / 2, charY + 18, 'Персонаж (тест): ' + this.activeCatConfig().name,
+        10, '#EBE2D5aa', 'center');
+      this.setBtns.push({ x: S.x + 20, y: charY, w: bgW, h: 36, k: 'character' });
+
+      // «Убрать мебель»/«Полный вайп игры» — не тумблеры (нет «включено»,
+      // это разовые действия), поэтому не заливаются амбером и не читают
+      // this[k] для подписи — click-логика для них отдельная ветка в
+      // onDown (input.js), не общий toggle this[t.k] = !this[t.k]. Пара в
+      // одну строку, как debug-тумблеры выше — экономит высоту панели под
+      // уже плотным списком настроек. «Полный вайп игры» (было «Сбросить
+      // состояние комнаты», пока не делало ничего, кроме «Скоро!») —
+      // единственный способ вернуться на CatSelect, см. input.js/save.js.
+      const actY = charY + 36 + 8, actW = (bgW - 12) / 2;
+      [['clearFurniture', 'Убрать мебель'], ['fullWipe', 'Полный вайп игры']]
         .forEach(([k, l], i) => {
           const x = S.x + 20 + i * (actW + 12);
           g.fillStyle(COL.chalk, 0.06); g.fillRoundedRect(x, actY, actW, 36, 9);

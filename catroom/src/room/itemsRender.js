@@ -43,6 +43,20 @@
     return I.floorDepth(pos);
   }
 
+  // Предмет на «передней» стене (frontLeft/frontRight — тот же открытый
+  // ближний край комнаты, куда двигаются дверь/окно в dragOpening,
+  // room/shell.js) физически стоит БЛИЖЕ к камере, чем весь пол и потолок —
+  // должен перекрывать и то, и другое, а не сортироваться среди них по
+  // I.depth() (та для wall-зоны смешивает позицию вдоль стены с диапазоном
+  // ВЫСОТЫ на стене — шкала, никак не сравнимая с x+y пола/кота, сравнение
+  // выходит почти случайным). Общий сдвиг ЗДЕСЬ, в игровом рендере, не в
+  // iso.js — тот файл общий с редактором уровней, значение самого I.depth()
+  // менять нельзя не разъехавшись с ним. Одна константа выше CEIL_DEPTH —
+  // выше него в игре уже ничего из обстановки нет, только надписи/UI/
+  // свечение (TEXT_DEPTH/GLOW_DEPTH/UI_DEPTH), их сдвиг не задевает.
+  const FRONT_WALL_DEPTH = CEIL_DEPTH + 50;
+  function isFrontWall(wall) { return wall === 'frontLeft' || wall === 'frontRight'; }
+
   root.MIXIN_ITEMS = {
 
     /* ==================== ПОДСВЕТКА ПУСТЫХ ЗОН ПРИ ДРАГЕ ====================
@@ -121,8 +135,11 @@
           entry.t = this.drawCeilInto(entry.g, entry.t);
         } else {
           // +0.001: маркер/подпись (g) поверх спрайта (img) той же зоны, если
-          // они на одной глубине — см. drawWallItemInto.
-          entry.g.setDepth(I.depth(this.zmap, zid) + 0.001);
+          // они на одной глубине — см. drawWallItemInto. Передняя стена —
+          // см. FRONT_WALL_DEPTH выше.
+          const z = this.zmap[zid];
+          const wallDepth = isFrontWall(z.wall) ? FRONT_WALL_DEPTH : I.depth(this.zmap, zid);
+          entry.g.setDepth(wallDepth + 0.001);
           entry.t = this.drawWallItemInto(entry.g, entry.t, zid, this.st.place[zid]);
         }
       }
@@ -163,9 +180,13 @@
       const geo = AG.resolve(auto, override);
       const contentW = geo.contentW || src.width, contentH = geo.contentH || src.height;
       const scale = Math.min(bw / contentW, bh / contentH) * geo.scaleMul;
+      // На примыкающем переднем крае (win.side==='frontRight') окно физически
+      // ближе к камере, чем весь пол/потолок — та же логика, что и у
+      // остальных предметов «передней» стены (см. FRONT_WALL_DEPTH выше).
+      const winDepth = this.st.win.side === 'frontRight' ? FRONT_WALL_DEPTH : SHELL_DEPTH + 0.1;
       this.windowImg.setOrigin(geo.originX, geo.originY);
       this.windowImg.setTexture(key).setVisible(true).setScale(scale)
-        .setPosition(c[0] + geo.offsetX, c[1] + geo.offsetY).setDepth(SHELL_DEPTH + 0.1 + geo.sortBias)
+        .setPosition(c[0] + geo.offsetX, c[1] + geo.offsetY).setDepth(winDepth + geo.sortBias)
         .setFlipX(this.st.win.side === 'frontRight');
     },
 
@@ -205,10 +226,14 @@
       const geo = AG.resolve(auto, override);
       const contentW = geo.contentW || src.width, contentH = geo.contentH || src.height;
       const scale = Math.min(bw / contentW, bh / contentH) * geo.scaleMul;
+      // На примыкающем переднем крае (side==='frontLeft') дверь физически
+      // ближе к камере, чем весь пол/потолок — та же логика, что и у окна/
+      // остальных предметов «передней» стены (см. FRONT_WALL_DEPTH выше).
+      const doorDepth = this.st.door.side === 'frontLeft' ? FRONT_WALL_DEPTH : SHELL_DEPTH + 0.1;
       this.doorImg.setOrigin(geo.originX, geo.originY);
       this.doorImg.setTexture(key).setVisible(true).setScale(scale)
         .setPosition(floorPt[0] + geo.offsetX, floorPt[1] + geo.offsetY)
-        .setDepth(SHELL_DEPTH + 0.1 + geo.sortBias);
+        .setDepth(doorDepth + geo.sortBias);
     },
 
     // Точка захвата — маленький кружок с крестиком, куда именно тыкать,
@@ -373,7 +398,17 @@
         // должна остаться там же, а не телепортироваться к окну.
         const isCurtain = iid === 'curtain' && (zid === 'WIN_ROD' || zid === 'WIN_FRAME');
         const fitPts = isCurtain ? this.curtainPoly() : pts;
-        const fitC = isCurtain ? I.centroid(fitPts) : c;
+        // Штора анфас (auto anchor — низ альфа-контента, ткань до пола) —
+        // позиция должна быть НИЗ прямоугольника окна (fitPts[0]/[1], оба на
+        // z=0, см. curtainPoly), а не его центр: с центром низ-anchor картинки
+        // упирался в середину высоты окна, а сама картинка росла и вверх (за
+        // потолок), и вниз не доставая до пола — целиком висела не там. У
+        // обычных стенных предметов (часы/портрет) центр decor-зоны и так
+        // используется как есть — под них уже свой anchor-override в
+        // assetGeometryData.json (в центре альфа-контента), тут не трогаем.
+        const fitC = isCurtain
+          ? [(fitPts[0][0] + fitPts[1][0]) / 2, (fitPts[0][1] + fitPts[1][1]) / 2]
+          : c;
         const xs = fitPts.map(p => p[0]), ys = fitPts.map(p => p[1]);
         const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
         // room/assetGeometry.js — тот же честный anchor/scale по альфа-
@@ -404,11 +439,12 @@
             .setDepth(fallDepth + 0.001)
             .setFlipX(false);
         } else {
+          const wallDepth = isFrontWall(z.wall) ? FRONT_WALL_DEPTH : I.depth(this.zmap, zid);
           entry.img.setAngle(0);
           entry.img.setOrigin(geo.originX, geo.originY);
           entry.img.setTexture(key).setVisible(true).setScale(baseScale * geo.scaleMul)
             .setPosition(fitC[0] + geo.offsetX, fitC[1] + geo.offsetY)
-            .setDepth(I.depth(this.zmap, zid) + geo.sortBias)
+            .setDepth(wallDepth + geo.sortBias)
             // Разворот при переезде окна/шторы на примыкающий передний край
             // (win.side==='frontRight', см. dragOpening в shell.js) — то же
             // зеркало, что и у floor-мебели при перестановке, картинка одна

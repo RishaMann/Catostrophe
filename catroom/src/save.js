@@ -24,7 +24,38 @@
     } catch (e) { /* приватный режим браузера / переполненная квота — не мешаем игре */ }
   }
 
-  root.SAVESTORE = { read: readRaw, write: writeRaw };
+  // Полный вайп (Настройки → «Полный вайп игры», см. input.js) — единственный
+  // способ вернуть игрока на CatSelect: пока catId сохранён, Boot туда
+  // больше не пускает (см. getCatChoice/splash/bootScene.js). Удаляет ключ
+  // целиком, не просто зануляет catId, — заодно и остаток состояния
+  // комнаты/мебели/настроения, раз это уже «вайп игры», а не только выбора.
+  function clearAll() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.removeItem(KEY);
+    } catch (e) { /* см. writeRaw — тот же приватный режим/квота */ }
+  }
+
+  root.SAVESTORE = {
+    read: readRaw, write: writeRaw, clear: clearAll,
+
+    // Выбор кота на сплэше (CatSelect → «Начать», см. splash/catSelectScene.js)
+    // — отдельное поле, не catCharacter: это решение ИГРОКА в терминах
+    // сплэша ('baton'/'shilo'), а не имя персонажа из Cats/manifest.json —
+    // комната сама мапит одно в другое (game.js: CAT_ID_TO_NAME). Пишется
+    // СРАЗУ в момент выбора, не ждёт периодического autosave комнаты (тот
+    // сохраняет catCharacter только раз в SAVE_INTERVAL_MS/на скрытие
+    // вкладки — закрой игрок игру раньше, выбор потерялся бы и CatSelect
+    // показался бы снова). Пока это поле есть — Boot пускает сразу в
+    // WelcomeBackScene, минуя CatSelect (см. splash/bootScene.js).
+    getCatChoice() {
+      const saved = readRaw();
+      return (saved && saved.catId) || null;
+    },
+    setCatChoice(catId) {
+      writeRaw({ ...(readRaw() || {}), catId });
+    }
+  };
 
   root.MIXIN_SAVE = {
     // Вызывается один раз в createStep3Finish, ПОСЛЕ того как дефолты сцены
@@ -61,7 +92,12 @@
     // небольшого объекта) — можно звать чаще, чем реально нужно, с запасом.
     saveGame() {
       if (!this.st) return; // сцена ещё не досоздалась (createStep3Finish не завершился)
+      // ...root.SAVESTORE.read() — иначе этот снимок затёр бы catId
+      // (SAVESTORE.setCatChoice, см. save.js), про который RoomScene ничего
+      // не знает: он пишется на CatSelect ДО того, как комната вообще
+      // появляется, а полный снимок ниже перезаписывает весь ключ целиком.
       root.SAVESTORE.write({
+        ...root.SAVESTORE.read(),
         v: 1,
         firstGameStartedAt: this.firstGameStartedAt,
         mood: this.mood, fish: this.fish, gems: this.gems,

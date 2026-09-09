@@ -100,7 +100,10 @@
         this.drawWindowBeam(gG);
         lights.forEach(L => {
           const alpha = L.kind === 'hanging' ? CFG.lighting.hangingLamp.alpha : CFG.lighting.floorLamp.alpha;
-          PFX.paintFloorDisc(gG, I, L.x, L.y, L.radius, CFG.lighting.levels, L.color, alpha);
+          const falloffPower = L.kind === 'hanging'
+            ? CFG.lighting.hangingLamp.falloffPower
+            : CFG.lighting.floorLamp.falloffPower;
+          PFX.paintFloorDisc(gG, I, L.x, L.y, L.radius, CFG.lighting.levels, L.color, alpha, falloffPower);
           this.drawWallGlow(gG, L);
         });
         this.drawGarlandGlow(gG);
@@ -142,7 +145,9 @@
       if (this.curtainClosed()) return;
       const F = I.PROJ.F, cfg = CFG.lighting.window;
       this.winGlassSegments().forEach(seg => {
-        PFX.paintWindowBeam(g, I, seg.side, F, seg.lat0, seg.lat1, cfg.depth, cfg.spread, cfg.levels, cfg.color, cfg.alpha);
+        PFX.paintWindowBeam(g, I, seg.side, F, seg.lat0, seg.lat1,
+          cfg.start, cfg.depth, cfg.spread, cfg.drift,
+          cfg.levels, cfg.color, cfg.alpha, cfg.falloffPower);
       });
     },
 
