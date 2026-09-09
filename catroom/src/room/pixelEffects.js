@@ -50,8 +50,11 @@
     rain: {
       enabled: true,
       fps: 16,
-      bg: { count: 19, color: 0x49647F, alpha: 0.34, w: 1, hMin: 2, hMax: 4, speedMin: 58, speedMax: 92 },
-      fg: { count: 8, color: 0xA9C5DF, alpha: 0.62, w: 1, hMin: 3, hMax: 6, speedMin: 105, speedMax: 155 }
+      // Пул считается по bbox окна, а затем режется двумя стеклянными
+      // масками; поэтому частиц нужно заметно больше, чем одновременно
+      // остаётся видимыми внутри узких секций.
+      bg: { count: 34, color: 0x587895, alpha: 0.46, w: 1, hMin: 2, hMax: 5, speedMin: 64, speedMax: 102 },
+      fg: { count: 15, color: 0xBDD8EE, alpha: 0.76, w: 1, hMin: 3, hMax: 7, speedMin: 112, speedMax: 168 }
     }
 
     // Отладочная подсветка (источники света/тени-кастеры/маска окна) — не

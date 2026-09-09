@@ -159,11 +159,11 @@
       // (вырезанные картинки, room/furnitureSprites.js) — тумблер в
       // «Настройки» (drawSettings/onDown). По умолчанию — прежнее поведение
       // (линии), спрайты — осознанный выбор.
-      this.furnitureSprites = false;
-      // Выключатель у двери (верхний свет) и тап по подставке торшера — оба
-      // по умолчанию включены. См. room/lighting.js (collectLights) и
+      this.furnitureSprites = true;
+      // Выключатель у двери (верхний свет) — включён, торшер (тап по
+      // подставке) — выключен: см. room/lighting.js (collectLights) и
       // input.js (hitSwitch/тап по лампе).
-      this.lightsOn = true; this.lampOn = true;
+      this.lightsOn = true; this.lampOn = false;
       // «Отладка предметов» (ui/assetGeometryEditor.js, MIXIN_ASSET_GEO_EDITOR)
       // — технический тумблер в «Настройки», не игровая механика.
       // geoSelected — {kind,entityId,iid} текущего редактируемого ассета
@@ -220,7 +220,7 @@
         { key: 'roomBg2', ru: 'Тёмная ночь' },
         { key: 'roomBg3', ru: 'Светлый день' }
       ];
-      this.bgIndex = 1; // тёмный ночной — под него сделана динамическая подсветка
+      this.bgIndex = 0; // тёплый вечер — стартовый фон по умолчанию
       // Размер/положение (layoutBackground) выставляются позже, после
       // this.rebuild() — им нужен PROJ.OY, а его считает applyProj() внутри
       // rebuild()/buildScene(), не раньше.

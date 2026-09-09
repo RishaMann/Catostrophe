@@ -5,22 +5,21 @@
   "light": { "x": 2.7, "y": 2.7 },
   "cat": { "x": 3, "y": 5.5 },
   "place": {
-    "ON_SOFA": "plaid", "WIN_FRAME": "garland", "WL_A": "wshelf",
-    "CEIL": "bulb"
+    "CEIL": "chandelier"
   },
   "floor": {
-    "lamp": { "x": 0.7, "y": 0.225 },
-    "wardrobe": { "x": 0.35, "y": 2.2 },
-    "bookshelf": { "x": 1.6, "y": 0.3 },
-    "rug": { "x": 3, "y": 2.8 },
-    "sofa": { "x": 2, "y": 2.4 },
-    "table": { "x": 3.3, "y": 2 },
-    "aquarium": { "x": 4.68, "y": 2.33 },
-    "pouf": { "x": 3.63, "y": 3.35 },
-    "vacuum": { "x": 1.85, "y": 4.22 },
-    "box": { "x": 5.6, "y": 4.2 },
-    "ficus": { "x": 6.6, "y": 3.4 },
-    "bed": { "x": 7.2, "y": 2.4 },
-    "bowls": { "x": 4.9, "y": 5.0 }
+    "wardrobe": { "x": 0.6, "y": 1.0 },
+    "bookshelf": { "x": 0.6, "y": 2.4 },
+    "lamp": { "x": 1.2, "y": 5.0 },
+    "sofa": { "x": 2.6, "y": 1.4 },
+    "rug": { "x": 2.8, "y": 2.0 },
+    "table": { "x": 2.6, "y": 2.5 },
+    "pouf": { "x": 4.0, "y": 1.8 },
+    "aquarium": { "x": 7.25, "y": 4.3 },
+    "box": { "x": 5.3, "y": 5.1 },
+    "ficus": { "x": 3.5, "y": 3.7 },
+    "scratch": { "x": 5.8, "y": 2.9 },
+    "bowls": { "x": 2.0, "y": 4.0 },
+    "scales": { "x": 4.5, "y": 5.0 }
   }
 }

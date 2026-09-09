@@ -53,11 +53,19 @@
 </noscript>
 <div id="app"></div>
 
+<!-- Мини-игра (catroom/minigame/, сборка catroom/minigame-src/) — full-screen
+     iframe поверх канваса, открывается/закрывается через src/minigame.js.
+     display:none по умолчанию — не грузит игру, пока её не открыли. -->
+<div id="minigameOverlay" style="display:none;position:fixed;inset:0;z-index:1000;background:#000">
+  <iframe id="minigameFrame" style="width:100%;height:100%;border:0" allow="autoplay"></iframe>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 <!-- порядок важен: каждый файл читает window.* от предыдущих при своей
      загрузке (нет сборщика/import) -->
 <script src="src/analytics.js"></script>
 <script src="src/save.js"></script>
+<script src="src/minigame.js"></script>
 <script src="src/Promotion/promotionConfig.js"></script>
 <script src="src/Promotion/promotionService.js"></script>
 <script src="src/iso.js"></script>

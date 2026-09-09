@@ -200,11 +200,19 @@
       const w = Math.max(scale, x1 - x0), h = Math.max(scale, y1 - y0);
 
       if (!this._rain) {
-        const spawn = (layerCfg, layer) => Array.from({ length: layerCfg.count }, (_, i) => ({
-          layer, seed: i * 97.13 + layer * 31,
-          speed: layerCfg.speedMin + (i % 7) / 6 * (layerCfg.speedMax - layerCfg.speedMin),
-          h: layerCfg.hMin + (i % 5) / 4 * (layerCfg.hMax - layerCfg.hMin)
-        }));
+        const spawn = (layerCfg, layer) => Array.from({ length: layerCfg.count }, (_, i) => {
+          const seed = i * 97.13 + (layer === 'fg' ? 31 : 0);
+          return {
+            layer, seed,
+            x: Math.floor(seed * 53.7) % Math.max(1, Math.floor(w / scale)),
+            y: Math.floor(seed * 61) % Math.max(1, Math.floor(h / scale)),
+            // Целое число logical pixels за visual frame.
+            step: Math.max(1, Math.round((layerCfg.speedMin + (i % 7) / 6 *
+              (layerCfg.speedMax - layerCfg.speedMin)) / cfg.fps / scale)),
+            drift: (i % 5 === 0) ? 1 : (i % 7 === 0 ? -1 : 0),
+            h: Math.round(layerCfg.hMin + (i % 5) / 4 * (layerCfg.hMax - layerCfg.hMin))
+          };
+        });
         this._rain = { bg: spawn(cfg.bg, 'bg'), fg: spawn(cfg.fg, 'fg') };
       }
 
@@ -214,12 +222,17 @@
         g.fillStyle(layerCfg.color, layerCfg.alpha);
         drops.forEach(d => {
           const cellW = Math.max(1, Math.round(w / scale));
-          const gx = Math.floor(x0 / scale) + (Math.floor(d.seed * 53.7) % cellW);
-          const totalH = h + d.h * scale + scale;
-          const fall = Math.floor((time * d.speed * 0.001 + d.seed * 61) % totalH);
-          const sy = Math.floor(y0 / scale) - Math.ceil(d.h) + Math.floor(fall / scale);
-          const sx = gx * scale;
-          const py = sy * scale;
+          const cellH = Math.max(1, Math.round(h / scale));
+          d.y += d.step;
+          d.x += d.drift;
+          if (d.y > cellH + d.h) {
+            d.y = -d.h - (Math.floor(d.seed) % 8);
+            d.x = (d.x + 7 + Math.floor(d.seed * 3)) % cellW;
+          }
+          if (d.x < 0) d.x += cellW;
+          if (d.x >= cellW) d.x -= cellW;
+          const sx = Math.floor(x0 / scale) * scale + d.x * scale;
+          const py = Math.floor(y0 / scale) * scale + d.y * scale;
           const ph = Math.max(scale, Math.round(d.h) * scale);
           // Тонкий ломаный cluster: не гладкая lineBetween и не толстый
           // прямоугольник. Сдвиг нижней половины даёт почти вертикальный дождь.
@@ -270,23 +283,25 @@
       return [(u + v) / 2, (v - u) / 2];
     },
 
-    // Выключатель верхнего света — на левой стене рядом с дверью (тап в
-    // любом режиме, см. input.js: это обычный бытовой прибор, а не элемент
-    // редактирования расстановки). Дверь бывает и на «своей» боковой стене
-    // (side==='left'), и уехавшей за угол на открытый передний край
-    // (side==='frontLeft') — там стены физически нет, крепить выключатель
-    // некуда, оставляем его на фиксированном месте у угла.
+    // Выключатель верхнего света — рядом с дверью, на той же стене/грани,
+    // где сейчас дверь (тап в любом режиме, см. input.js: это обычный
+    // бытовой прибор, а не элемент редактирования расстановки). Дверь
+    // бывает и на «своей» боковой стене (side==='left', плоскость x=0), и
+    // уехавшей за угол на открытый передний край (side==='frontLeft',
+    // плоскость y=F, см. dragOpening) — выключатель едет вместе с ней в
+    // обоих случаях, тем же смещением от door.pos, просто вдоль другой оси.
     switchPos() {
       const F = I.PROJ.F;
-      const y = this.st.door.side === 'left'
-        ? clamp(this.st.door.pos - 0.55, 0.35, F - 0.35)
-        : 0.8;
-      return { y, z: 1.35 };
+      const pos = clamp(this.st.door.pos - 0.55, 0.35, F - 0.35);
+      return { side: this.st.door.side, pos, z: 1.35 };
     },
     switchPoly() {
-      const { y, z } = this.switchPos();
-      const a = y - 0.15, c = y + 0.15, b = z - 0.2, d = z + 0.2;
-      return [I.P(0, a, b), I.P(0, c, b), I.P(0, c, d), I.P(0, a, d)];
+      const { side, pos, z } = this.switchPos();
+      const F = I.PROJ.F;
+      const a = pos - 0.15, c = pos + 0.15, b = z - 0.2, d = z + 0.2;
+      return side === 'left'
+        ? [I.P(0, a, b), I.P(0, c, b), I.P(0, c, d), I.P(0, a, d)]
+        : [I.P(a, F, b), I.P(c, F, b), I.P(c, F, d), I.P(a, F, d)];
     },
     hitSwitch(x, y) { return inPoly([x, y], this.switchPoly()); },
 
