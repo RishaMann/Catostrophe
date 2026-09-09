@@ -22,8 +22,12 @@
     // Имя сцены — параметр запуска (this.scene.start('room',{name:'scene2'})
     // потом, когда появится вторая сцена за дверью); без параметра (обычный
     // старт игры) Phaser зовёт init() с {} — падаем на 'scene1'.
+    // catId — из сплэша (CatSelectScene → DarkRoomOnboarding →
+    // 'room', см. splash/*.js): 'baton'/'shilo', какого кота выбрал игрок.
+    // Без него (прямой заход на 'room' в разработке) — дефолт по манифесту.
     init(data) {
       this.sceneName = (data && data.name) || 'scene1';
+      this.initialCatId = data && data.catId;
     }
 
     preload() {
@@ -129,7 +133,13 @@
       // при каждом обращении (activeCatConfig()), не кэшируются отдельно,
       // кроме this.catSpeed — он читается в tick() на каждом кадре, дешевле
       // держать под рукой.
-      this.catCharacter = this.catNames[0];
+      // baton → Redfat, shilo → Siamese (см. splash/catSelectScene.js:
+      // HIDEOUT_CAT) — Labra тут не участвует, это тестовый персонаж
+      // прототипа, недостижимый через сплэш. Неизвестный/отсутствующий
+      // catId (прямой заход на 'room' в разработке) — дефолт, первый по
+      // манифесту.
+      const CAT_ID_TO_NAME = { baton: 'Redfat', shilo: 'Siamese' };
+      this.catCharacter = CAT_ID_TO_NAME[this.initialCatId] || this.catNames[0];
       this.catSpeed = this.activeCatConfig().speed;
 
       this.cat = {
@@ -424,7 +434,15 @@
     height: SCREEN_H,
     backgroundColor: '#332C39',
     scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-    scene: [RoomScene]
+    // Preboot стартует первым (см. tech-spec_splash_cat-select.md):
+    // Preboot → Boot → CatSelect (только первый раз — дальше Boot видит
+    // сохранённый выбор кота, save.js: SAVESTORE.getCatChoice, и пускает
+    // сразу в WelcomeBack, см. splash/bootScene.js: goNext) →
+    // DarkRoomOnboarding (пока заглушка, splash/darkRoomOnboardingStub.js)
+    // → комната. 'room' остаётся в списке сцен, чтобы её можно было
+    // стартовать напрямую при отладке (this.scene.start('room', {...})),
+    // но сама она больше не запускается первой.
+    scene: [window.PrebootScene, window.BootScene, window.CatSelectScene, window.WelcomeBackScene, window.DarkRoomOnboardingStub, RoomScene]
   });
   window.__game = game; // отладка в консоли — та же договорённость, что в phaser-game/
 })();
