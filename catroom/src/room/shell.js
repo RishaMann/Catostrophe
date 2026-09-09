@@ -219,7 +219,14 @@
           const fall = Math.floor((time * d.speed * 0.001 + d.seed * 61) % totalH);
           const sy = Math.floor(y0 / scale) - Math.ceil(d.h) + Math.floor(fall / scale);
           const sx = gx * scale;
-          g.fillRect(sx, sy * scale, layerCfg.w * scale, d.h * scale);
+          const py = sy * scale;
+          const ph = Math.max(scale, Math.round(d.h) * scale);
+          // Тонкий ломаный cluster: не гладкая lineBetween и не толстый
+          // прямоугольник. Сдвиг нижней половины даёт почти вертикальный дождь.
+          const upper = Math.max(scale, Math.floor(ph * 0.55 / scale) * scale);
+          g.fillRect(sx, py, layerCfg.w * scale, upper);
+          g.fillRect(sx + ((Math.floor(d.seed) & 1) ? scale : 0), py + upper,
+            layerCfg.w * scale, ph - upper);
         });
       };
       drawLayer(this._rain.bg, cfg.bg);
