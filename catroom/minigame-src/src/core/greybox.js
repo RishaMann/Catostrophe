@@ -14,7 +14,15 @@ import { ASSETS, READY, ART_DIR } from '../config/assets.js';
 export function preloadArt(scene) {
   READY.forEach(key => {
     const a = ASSETS[key];
-    if (a && a.file) scene.load.image(key, ART_DIR + a.file);
+    if (!a || !a.file) return;
+    if (scene.textures.exists(key)) return;
+    if (a.type === 'spritesheet') {
+      scene.load.spritesheet(key, ART_DIR + a.file, {
+        frameWidth: a.frameWidth, frameHeight: a.frameHeight
+      });
+    } else {
+      scene.load.image(key, ART_DIR + a.file);
+    }
   });
 }
 

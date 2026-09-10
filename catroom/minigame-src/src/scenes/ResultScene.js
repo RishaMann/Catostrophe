@@ -5,12 +5,13 @@
 import Phaser from 'phaser';
 import { FIELD } from '../config/level.js';
 import { load } from '../core/save.js';
-import { makeTextures } from '../core/greybox.js';
+import { preloadArt, makeTextures } from '../core/greybox.js';
 import { isEmbedded, exitToRoom } from '../core/bridge.js';
 
 export default class ResultScene extends Phaser.Scene {
   constructor() { super('Result'); }
   init(data) { this.data_ = data; }
+  preload() { preloadArt(this); }
 
   create() {
     this.cameras.main.setBackgroundColor('#56504B');

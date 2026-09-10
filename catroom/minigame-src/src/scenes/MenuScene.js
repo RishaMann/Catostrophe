@@ -6,11 +6,13 @@ import Phaser from 'phaser';
 import { FIELD } from '../config/level.js';
 import { load, resetAll } from '../core/save.js';
 import { tasksForToday } from '../config/tasks.js';
-import { makeTextures } from '../core/greybox.js';
+import { preloadArt, makeTextures } from '../core/greybox.js';
 import { isEmbedded, exitToRoom } from '../core/bridge.js';
 
 export default class MenuScene extends Phaser.Scene {
   constructor() { super('Menu'); }
+
+  preload() { preloadArt(this); }
 
   create() {
     this.cameras.main.setBackgroundColor('#56504B');
