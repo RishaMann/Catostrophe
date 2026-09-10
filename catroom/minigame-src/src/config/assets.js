@@ -2,8 +2,8 @@
 //  РЕЕСТР АССЕТОВ  —  единственный договор между кодом и графикой
 // ============================================================
 //
-//  Игровое поле: 540 × 960 — это ровно половина от 1080 × 1920,
-//  то есть соотношение сторон телефона 9:16.
+//  Игровое поле: вертикальный браузерный viewport 540 × 960. При встраивании
+//  в страницу или трансляцию Phaser масштабирует его целиком с пропорцией 9:16.
 //  Художник рисует в двойном размере (×2) и кладёт как есть —
 //  на экране всё сядет пиксель в пиксель.
 //
@@ -21,6 +21,11 @@
 export const ART_DIR = 'art/';
 
 export const ASSETS = {
+  // ---- фон и неподвижный интерфейс ----
+  background: { file: 'background-pixel-vga.png', w: 540, h: 960 },
+  hud_header: { file: 'hud-header.png', w: 540, h: 112 },
+  hud_footer: { file: 'hud-footer.png', w: 540, h: 55 },
+
   // ---- персонаж ----
   // Две позы. Обычная — кот стоит и прыгает. Вторая — висит на люстре
   // на одной лапе: тело вниз, голова вверх.
@@ -32,6 +37,7 @@ export const ASSETS = {
   lampa:    { file: 'lampa.png',    w: 32,  h: 50,  color: 0xC9A227, shape: 'lamp',  label: '' },
   krovat:   { file: 'krovat.png',   w: 250, h: 60,  color: 0x9C4A63, shape: 'rect',  label: 'Кровать' },
   komod:    { file: 'komod.png',    w: 84,  h: 130, color: 0x5A4433, shape: 'tv',    label: 'Комод и ТВ' },
+  tv:       { file: 'tv.png',       w: 60,  h: 40,  color: 0x39434F, shape: 'rect',  label: '' },
   stol:     { file: 'stol.png',     w: 130, h: 82,  color: 0x6B4A2F, shape: 'round', label: 'Стол' },
   shkaf:    { file: 'shkaf.png',    w: 150, h: 130, color: 0x4A3B2A, shape: 'shkaf', label: 'Шкаф' },
 
@@ -41,7 +47,12 @@ export const ASSETS = {
 
   // ---- декор и опасности ----
   okno:     { file: 'okno.png',     w: 34,  h: 150, color: 0x3C6E8F, shape: 'rect',  label: 'Окно' },
+  okno_right:{ file: 'okno-right.png',w: 34, h: 150, color: 0x3C6E8F, shape: 'rect',  label: 'Окно' },
   hozyain:  { file: 'hozyain.png',  w: 200, h: 48,  color: 0xD8A48F, shape: 'human', label: '' },
+  hozyain_breathe: { file: 'hozyain-breathe-up.png', w: 200, h: 48 },
+  hozyain_awake:   { file: 'hozyain-awake.png', w: 200, h: 48 },
+  hozyain_throw:   { file: 'hozyain-throw-sheet.png', w: 144, h: 72,
+                     type: 'spritesheet', frameWidth: 144, frameHeight: 72 },
   // Люстра: маленькая нарочно — она висит посреди экрана и не должна
   // загораживать комнату. Кот цепляется за неё лапой.
   lyustra:  { file: 'lyustra.png',  w: 64,  h: 40,  color: 0xD9C27A, shape: 'lyustra',label: 'Люстра' },
@@ -57,6 +68,8 @@ export const ASSETS = {
 // Ключи, для которых картинка уже нарисована и лежит в public/art/.
 // Художник дописывает сюда ключ — и заглушка сама заменяется картинкой.
 export const READY = [
-  // 'cat',
-  // 'krovat',
+  'background', 'hud_header', 'hud_footer',
+  'tumba', 'lampa', 'krovat', 'komod', 'tv', 'stol', 'shkaf', 'akvarium',
+  'okno', 'okno_right', 'hozyain', 'hozyain_breathe', 'hozyain_awake',
+  'hozyain_throw', 'lyustra', 'ryba', 'podushka', 'pol'
 ];

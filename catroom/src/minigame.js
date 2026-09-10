@@ -16,10 +16,21 @@
   const overlay = document.getElementById('minigameOverlay');
   const frame = document.getElementById('minigameFrame');
   let onExit = null;
+  let launchContext = { catCharacter: 'Siamese' };
+
+  function sendLaunchContext() {
+    if (!frame || !frame.contentWindow) return;
+    frame.contentWindow.postMessage({ type: 'catdom:init', ...launchContext }, window.location.origin);
+  }
 
   window.addEventListener('message', e => {
     const d = e.data;
-    if (!d || typeof d !== 'object' || d.type !== 'catdom:exit') return;
+    if (!d || typeof d !== 'object' || !frame || e.source !== frame.contentWindow) return;
+    if (d.type === 'catdom:ready') {
+      sendLaunchContext();
+      return;
+    }
+    if (d.type !== 'catdom:exit') return;
     close_();
     if (onExit) { const cb = onExit; onExit = null; cb(Number(d.fishEarned) || 0); }
   });
@@ -27,8 +38,18 @@
   // exitCb(fishEarned) — вызывается один раз, при выходе из мини-игры
   // (кнопка «в комнату» там) или при её закрытии. fishEarned — 0, если
   // игрок ничего не заработал за заход или закрыл сразу.
-  function open(exitCb) {
+  function open(options, exitCb) {
     if (!overlay || !frame) return;
+    // Старый вызов open(callback) остаётся рабочим для внешних тестов.
+    if (typeof options === 'function') {
+      exitCb = options;
+      options = null;
+    }
+    launchContext = {
+      catCharacter: options && typeof options.catCharacter === 'string'
+        ? options.catCharacter
+        : 'Siamese'
+    };
     onExit = exitCb || null;
     // Полная перезагрузка при каждом открытии — простой и надёжный способ
     // сбросить состояние сцены мини-игры; её собственный прогресс (рыбки,
@@ -38,6 +59,7 @@
     // при запросе index.html редиректят на URL без него и БЕЗ конечного
     // слэша — тогда относительные пути мини-игры (./assets/...) резолвятся
     // от catroom, а не от minigame/, и она грузится пустым экраном.
+    frame.onload = sendLaunchContext;
     frame.src = 'minigame/';
     overlay.style.display = 'block';
   }
@@ -45,6 +67,7 @@
   function close_() {
     if (!overlay || !frame) return;
     overlay.style.display = 'none';
+    frame.onload = null;
     frame.src = 'about:blank';
   }
 

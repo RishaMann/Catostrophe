@@ -13,7 +13,34 @@ const EMBEDDED = (() => {
   try { return !!window.parent && window.parent !== window; } catch (e) { return false; }
 })();
 
+let launchContext = { catCharacter: 'Siamese' };
+const contextListeners = new Set();
+
+if (EMBEDDED) {
+  window.addEventListener('message', event => {
+    if (event.source !== window.parent) return;
+    const data = event.data;
+    if (!data || data.type !== 'catdom:init') return;
+    launchContext = {
+      ...launchContext,
+      catCharacter: typeof data.catCharacter === 'string'
+        ? data.catCharacter
+        : launchContext.catCharacter
+    };
+    contextListeners.forEach(listener => listener({ ...launchContext }));
+  });
+
+  // Родитель отвечает контекстом. Отдельный ready нужен, потому что iframe
+  // может успеть загрузиться до того, как parent назначил onload.
+  try { window.parent.postMessage({ type: 'catdom:ready' }, '*'); } catch (e) { /* standalone */ }
+}
+
 export function isEmbedded() { return EMBEDDED; }
+export function getLaunchContext() { return { ...launchContext }; }
+export function onLaunchContext(listener) {
+  contextListeners.add(listener);
+  return () => contextListeners.delete(listener);
+}
 
 // Один снимок total fish на момент открытия страницы — дальше отдаём
 // родителю разницу (сколько заработано ЗА ЭТОТ заход), а не абсолютное

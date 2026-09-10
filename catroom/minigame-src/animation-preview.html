@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Предпросмотр анимации</title>
+  <link rel="stylesheet" href="/src/animation-preview.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">▶</span>
+        <div>
+          <p class="eyebrow">CATOSTROPHE TOOLS</p>
+          <h1>Спрайт-превью</h1>
+        </div>
+      </div>
+
+      <section class="panel" aria-labelledby="load-title">
+        <div class="section-heading">
+          <h2 id="load-title">Кадры из Figma</h2>
+          <button class="text-button danger" id="clear-button" type="button" disabled>Очистить</button>
+        </div>
+        <button class="drop-zone" id="drop-zone" type="button">
+          <span class="drop-icon" aria-hidden="true">＋</span>
+          <strong>Перетащи PNG сюда</strong>
+          <small>или выбери экспортированные кадры</small>
+        </button>
+        <input id="frames-input" type="file" accept="image/png,image/webp,image/gif" multiple hidden />
+
+        <details class="sheet-tools">
+          <summary>Загрузить готовый sprite sheet</summary>
+          <div class="sheet-grid">
+            <label><span>Ширина кадра</span><input id="sheet-width" type="number" min="1" step="1" value="72" /></label>
+            <label><span>Высота кадра</span><input id="sheet-height" type="number" min="1" step="1" value="56" /></label>
+          </div>
+          <button class="secondary-button" id="sheet-button" type="button">Выбрать sheet</button>
+          <input id="sheet-input" type="file" accept="image/png,image/webp" hidden />
+          <p class="helper">Режется слева направо, затем сверху вниз.</p>
+        </details>
+      </section>
+
+      <section class="panel controls-panel" aria-labelledby="playback-title">
+        <h2 id="playback-title">Проигрывание</h2>
+        <label class="range-field">
+          <span>Скорость <output id="fps-output">10 FPS</output></span>
+          <input id="fps-input" type="range" min="1" max="30" value="10" />
+        </label>
+        <label class="range-field">
+          <span>Масштаб <output id="zoom-output">4×</output></span>
+          <input id="zoom-input" type="range" min="1" max="8" value="4" />
+        </label>
+        <div class="switch-row">
+          <span>Игровая центровка</span>
+          <label class="switch"><input id="game-alignment-input" type="checkbox" checked /><span aria-hidden="true"></span></label>
+        </div>
+        <p class="alignment-note" id="alignment-note">Общая точка опоры и высота по альфа-границам всех кадров.</p>
+        <div class="switch-row">
+          <span>Туда-обратно</span>
+          <label class="switch"><input id="ping-pong-input" type="checkbox" /><span aria-hidden="true"></span></label>
+        </div>
+        <div class="switch-row">
+          <span>Отразить по горизонтали</span>
+          <label class="switch"><input id="flip-input" type="checkbox" /><span aria-hidden="true"></span></label>
+        </div>
+        <fieldset class="background-picker">
+          <legend>Фон</legend>
+          <label title="Прозрачность"><input type="radio" name="background" value="checker" checked /><span class="checker-swatch"></span></label>
+          <label title="Тёмный"><input type="radio" name="background" value="dark" /><span class="dark-swatch"></span></label>
+          <label title="Светлый"><input type="radio" name="background" value="light" /><span class="light-swatch"></span></label>
+          <label title="Хромакей"><input type="radio" name="background" value="green" /><span class="green-swatch"></span></label>
+        </fieldset>
+      </section>
+      <p class="privacy-note">Файлы остаются в браузере и никуда не загружаются.</p>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-header">
+        <div><p class="eyebrow">ANIMATION</p><h2 id="animation-title">Новая анимация</h2></div>
+        <div class="frame-stats" id="frame-stats">0 кадров</div>
+      </header>
+      <div class="stage checker" id="stage">
+        <canvas id="preview-canvas" aria-label="Предпросмотр анимации"></canvas>
+        <div class="empty-state" id="empty-state">
+          <span aria-hidden="true">▦</span><strong>Добавь кадры</strong>
+          <p>PNG-файлы можно бросить прямо в это окно</p>
+        </div>
+      </div>
+      <div class="transport" aria-label="Управление анимацией">
+        <button class="icon-button" id="previous-button" type="button" aria-label="Предыдущий кадр" disabled>‹</button>
+        <button class="play-button" id="play-button" type="button" disabled><span aria-hidden="true">▶</span><span>Старт</span></button>
+        <button class="icon-button" id="next-button" type="button" aria-label="Следующий кадр" disabled>›</button>
+        <span class="counter" id="frame-counter">— / —</span>
+      </div>
+      <section class="timeline" aria-labelledby="timeline-title">
+        <div class="timeline-heading">
+          <div><h2 id="timeline-title">Лента кадров</h2><p>Перетаскивай карточки, чтобы поменять порядок.</p></div>
+          <button class="secondary-button compact" id="sort-button" type="button" disabled>По имени</button>
+        </div>
+        <div class="frames-list" id="frames-list"></div>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="/src/animation-preview.js"></script>
+</body>
+</html>

@@ -281,7 +281,7 @@
     // операцией с этим сохранением игры, не трогая localStorage мини-игры.
     openMinigame() {
       if (!root.CatMinigame) return;
-      root.CatMinigame.open(fishEarned => {
+      root.CatMinigame.open({ catCharacter: this.catCharacter }, fishEarned => {
         if (fishEarned > 0) {
           this.fish += fishEarned;
           this.mood = clamp(this.mood + Math.min(20, Math.round(fishEarned / 5)), 0, 100);

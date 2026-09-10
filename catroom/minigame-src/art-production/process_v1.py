@@ -334,6 +334,33 @@ def save_cat_frames():
     fit_sprite(frames[9], (68, 108), RUNTIME_2X / "cat-hang.png")
 
 
+def save_owner_states():
+    for filename in OWNER_STATIC_STATES:
+        fit_sprite(MASTERS / filename, (200, 48), RUNTIME_1X / filename)
+        fit_sprite(MASTERS / filename, (400, 96), RUNTIME_2X / filename)
+
+    # Throwing states are upper-body overlays. Their common transparent canvas
+    # retains registration while leaving vertical space for the raised arm.
+    for filename in OWNER_THROW_STATES:
+        image = Image.open(MASTERS / filename).convert("RGBA")
+        image.resize((144, 72), Image.Resampling.LANCZOS).save(
+            RUNTIME_1X / filename, optimize=True
+        )
+        image.resize((288, 144), Image.Resampling.LANCZOS).save(
+            RUNTIME_2X / filename, optimize=True
+        )
+
+    for directory, frame_size in (
+        (RUNTIME_1X, (144, 72)),
+        (RUNTIME_2X, (288, 144)),
+    ):
+        sheet = Image.new("RGBA", (frame_size[0] * 3, frame_size[1]), (0, 0, 0, 0))
+        for index, filename in enumerate(OWNER_THROW_STATES):
+            frame = Image.open(directory / filename).convert("RGBA")
+            sheet.alpha_composite(frame, (index * frame_size[0], 0))
+        sheet.save(directory / "hozyain-throw-sheet.png", optimize=True)
+
+
 def composite_center(canvas: Image.Image, filename: str, x: float, y: float):
     sprite = Image.open(RUNTIME_1X / filename).convert("RGBA")
     left = round(x - sprite.width / 2)
@@ -493,6 +520,7 @@ def main():
     save_ui_panels()
     save_props()
     save_cat_frames()
+    save_owner_states()
     save_preview()
     save_screen_layout_preview()
 
