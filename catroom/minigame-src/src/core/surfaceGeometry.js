@@ -23,6 +23,7 @@
 import BASE_FILE from '../config/surfaceGeometryData.json';
 
 const STORAGE_KEY = 'cat-game-surface-geometry-v2';
+const EXPORT_KEY = 'cat-game-surface-geometry-last-export-v1';
 
 export function loadSurfaceGeometry() {
   try {
@@ -139,4 +140,24 @@ export function dumpSurfaceGeometry() {
   const out = {};
   ids.forEach(id => { out[id] = { ...(BASE_FILE[id] || {}), ...(s[id] || {}) }; });
   return out;
+}
+
+// «Экспорт» — не только копирование для разработчика, но и именованная
+// пользовательская контрольная точка для кнопки «Сбросить».
+export function saveExportSnapshot(snapshot) {
+  try {
+    localStorage.setItem(EXPORT_KEY, JSON.stringify(snapshot));
+  } catch (e) {
+    // В приватном режиме экспорт всё равно остаётся в консоли/буфере.
+  }
+}
+
+export function loadExportSnapshot() {
+  try {
+    const value = JSON.parse(localStorage.getItem(EXPORT_KEY));
+    if (value && typeof value === 'object') return value;
+  } catch (e) {
+    // Повреждённая контрольная точка не должна ломать редактор.
+  }
+  return BASE_FILE || {};
 }

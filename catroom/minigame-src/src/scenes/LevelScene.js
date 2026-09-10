@@ -26,10 +26,11 @@ import {
   catVisual, normalizeCharacter, preloadCharacterArt, registerCharacterAnimations
 } from '../config/characters.js';
 import { preloadArt, makeTextures, labelFor, sizeOf, WATER_LINE } from '../core/greybox.js';
-import { load, save, addFish, markTaskDone } from '../core/save.js';
+import { load, isClaimed, completeRun } from '../core/save.js';
 import { getLaunchContext, onLaunchContext, isEmbedded, exitToRoom } from '../core/bridge.js';
 import {
   loadSurfaceGeometry, resolveSurfaceGeometry, saveSurfaceGeometry, dumpSurfaceGeometry,
+  saveExportSnapshot, loadExportSnapshot,
   resolveHangPoint, saveHangPoint, resolveSpriteGeometry, saveSpriteGeometry
 } from '../core/surfaceGeometry.js';
 
@@ -49,6 +50,7 @@ export default class LevelScene extends Phaser.Scene {
     this.task = data.task;
     this.jumps = 0;
     this.runFish = 0;
+    this.pendingRewards = new Map();
     this.visited = [];
     this.state = 'idle';
     this.dragStart = null;
@@ -195,7 +197,10 @@ export default class LevelScene extends Phaser.Scene {
         // отправная точка, а не что-то заведомо неправильное.
         item.surfaceStates = {
           flat: item.surface,
-          tipped: resolveSurfaceGeometry(item.id + ':tipped', itemSize, defaults, this.surfaceOverrides),
+          tipped: localizeLegacyTippedSurface(
+            resolveSurfaceGeometry(item.id + ':tipped', itemSize, defaults, this.surfaceOverrides),
+            itemSize
+          ),
           broken: resolveSurfaceGeometry(item.id + ':broken', itemSize, defaults, this.surfaceOverrides)
         };
         item.surfaceDefaults = { flat: defaults, tipped: defaults, broken: defaults };
@@ -310,12 +315,12 @@ export default class LevelScene extends Phaser.Scene {
     // ---------- заначки ----------
     // Рыбки создаются заранее, но лежат невидимыми на своих местах.
     // Пока кот не плюхнулся в аквариум, их нет в комнате и взять их нельзя.
-    const saved = load();
     this.stashSprites = [];
     layout.stash.forEach((s, i) => {
-      if (saved.stashTaken.includes(i)) return;
+      const claimId = `stash:${s.sourceId ?? i}`;
+      if (isClaimed(claimId)) return;
       const sp = this.add.image(s.x, s.y, 'ryba').setDepth(4).setVisible(false);
-      sp.setData('index', i).setData('fish', s.fish)
+      sp.setData('claimId', claimId).setData('fish', s.fish)
         .setData('tx', s.x).setData('ty', s.y)
         .setData('live', false);        // true — когда рыбка долетела и её можно взять
       this.stashSprites.push(sp);
@@ -382,11 +387,16 @@ export default class LevelScene extends Phaser.Scene {
     const waterY = topY + s.h * WATER_LINE;
     const first = !this.fishReleased;
 
-    // Сажаем кота в воду: торчит только верхняя половина.
+    // Сажаем кота по центру резервуара, а не сохраняем случайную точку
+    // приземления. Раньше у края хвост и корпус торчали сбоку и кот
+    // выглядел приклеенным к аквариуму, а не находящимся внутри него.
+    // Более глубокий bodyY оставляет над передним стеклом в основном
+    // голову и верх корпуса; остальное перекрывает спрайт аквариума.
     this.cat.body.reset(
-      Phaser.Math.Clamp(this.cat.x, item.x - s.w * 0.28, item.x + s.w * 0.28),
-      waterY + this.catSize().h * 0.18
+      item.x,
+      waterY + this.catSize().h * 0.45
     );
+    this.cat.setFlipX(false).setAngle(0);
     const outDelay = first
       ? BALANCE.AQUA_OUT_MS
       : BALANCE.AQUA_OUT_MS_AGAIN;
@@ -401,11 +411,7 @@ export default class LevelScene extends Phaser.Scene {
         this.aquaHint.destroy();
         this.aquaHint = null;
       }
-      if (item.fish) {
-        this.runFish += item.fish;
-        addFish(item.fish);
-        this.updateHud();
-      }
+      if (item.fish) this.earnFish(`item:${item.id}`, item.fish);
       this.say(pick(item.lines));
       this.time.delayedCall(320, () => this.releaseFish(item.x, waterY));
     } else {
@@ -671,15 +677,27 @@ export default class LevelScene extends Phaser.Scene {
     const visual = catVisual(this.character, this.catVisualState || 'idle');
     const size = visual.size || { w: 72, h: 56 };
     const bodyH = sizeOf('cat').h;
-    const y = this.catPose === 'cat_hang'
+    let x = this.cat.x;
+    let y = this.catPose === 'cat_hang'
       ? this.cat.y
       : this.cat.y - (size.h - bodyH) / 2 + (visual.offsetY || 0);
     // Лапы должны визуально лежать НА наклонной линии — поворачиваем
     // спрайт на её угол (физическое тело у Arcade Physics всегда угол 0,
     // коллайдер плоский даже у наклонной линии, см. surfaceLine).
     const tipAngle = this.tipLineAngleDeg(this.tiltedTarget(this.standingOn));
+    if (this.catPose !== 'cat_hang' && tipAngle) {
+      // Поворачиваем кота вокруг точки контакта лап с поверхностью, а не
+      // вокруг центра картинки. Иначе на крутом наклоне лапы уходили ниже
+      // линии, хотя физическое тело стояло на правильной высоте.
+      const target = this.tiltedTarget(this.standingOn);
+      const contactY = this.surfaceYAt(target, this.cat.x);
+      const angle = Phaser.Math.DegToRad(tipAngle);
+      const halfH = size.h / 2;
+      x = this.cat.x + Math.sin(angle) * halfH;
+      y = contactY - Math.cos(angle) * halfH + (visual.offsetY || 0);
+    }
     this.catVisualSprite
-      .setPosition(this.cat.x, y)
+      .setPosition(x, y)
       .setFlipX(this.cat.flipX)
       .setAngle(this.cat.angle + tipAngle)
       .setDepth(this.cat.depth);
@@ -725,9 +743,7 @@ export default class LevelScene extends Phaser.Scene {
 
     if (!point.taken) {
       point.taken = true;
-      this.runFish += point.fish;
-      addFish(point.fish);
-      this.updateHud();
+      this.earnFish(`hang:${point.id}`, point.fish);
     }
     this.say(pick(point.lines));
   }
@@ -910,6 +926,33 @@ export default class LevelScene extends Phaser.Scene {
     // другом состоянии (жалоба): теперь у каждого состояния просто своя,
     // независимо настраиваемая в отладчике линия, картинка крутится сама
     // по себе (triggerTip), с линией больше никак математически не связана.
+    const item = target.item;
+    const angleDeg = item && item.tippable ? (item.tipAngle || 0) : 0;
+    if (item && item.tippable && angleDeg) {
+      const geo = target.spriteGeo || { scaleMul: 1, offsetX: 0, offsetY: 0 };
+      const scale = geo.scaleMul || 1;
+      const cx = item.x + (geo.offsetX || 0);
+      const cy = item.y + (geo.offsetY || 0);
+      const localTop = -target.size.h * scale / 2;
+      const x1Local = target.surface.left * scale;
+      const x2Local = target.surface.right * scale;
+      const y1Local = localTop + (target.surface.inset + (target.surface.tiltLeft || 0)) * scale;
+      const y2Local = localTop + (target.surface.inset + (target.surface.tiltRight || 0)) * scale;
+      const side = item.tipPivotSide || Math.sign(angleDeg) || 1;
+      const pivotX = cx + side * target.size.w * scale / 2;
+      const pivotY = cy + target.size.h * scale / 2;
+      const a = Phaser.Math.DegToRad(angleDeg);
+      const rotate = (lx, ly) => {
+        const wx = cx + lx, wy = cy + ly;
+        const dx = wx - pivotX, dy = wy - pivotY;
+        return {
+          x: pivotX + dx * Math.cos(a) - dy * Math.sin(a),
+          y: pivotY + dx * Math.sin(a) + dy * Math.cos(a)
+        };
+      };
+      const p1 = rotate(x1Local, y1Local), p2 = rotate(x2Local, y2Local);
+      return { x1: p1.x, x2: p2.x, y: (p1.y + p2.y) / 2, y1: p1.y, y2: p2.y };
+    }
     const x1 = target.centerX + target.surface.left;
     const x2 = target.centerX + target.surface.right;
     const y = target.visualTop + target.surface.inset;
@@ -925,6 +968,28 @@ export default class LevelScene extends Phaser.Scene {
     const line = this.surfaceLine(target);
     const t = Phaser.Math.Clamp((x - line.x1) / Math.max(1, line.x2 - line.x1), 0, 1);
     return line.y1 + (line.y2 - line.y1) * t;
+  }
+
+  // Перевод мировой точки пальца в локальные координаты спрайта. Так
+  // ручки редактора остаются корректными и на уже повёрнутом предмете.
+  surfaceLocalPoint(target, x, y) {
+    const item = target.item;
+    const angleDeg = item && item.tippable ? (item.tipAngle || 0) : 0;
+    if (!item || !angleDeg) return { x: x - target.centerX, y: y - target.visualTop };
+    const geo = target.spriteGeo || { scaleMul: 1, offsetX: 0, offsetY: 0 };
+    const scale = geo.scaleMul || 1;
+    const cx = item.x + (geo.offsetX || 0), cy = item.y + (geo.offsetY || 0);
+    const side = item.tipPivotSide || Math.sign(angleDeg) || 1;
+    const pivotX = cx + side * target.size.w * scale / 2;
+    const pivotY = cy + target.size.h * scale / 2;
+    const a = Phaser.Math.DegToRad(-angleDeg);
+    const dx = x - pivotX, dy = y - pivotY;
+    const wx = pivotX + dx * Math.cos(a) - dy * Math.sin(a);
+    const wy = pivotY + dx * Math.sin(a) + dy * Math.cos(a);
+    return {
+      x: (wx - cx) / scale,
+      y: (wy - (cy - target.size.h * scale / 2)) / scale
+    };
   }
 
   // Угол линии в градусах — визуальный поворот кота на наклонной
@@ -965,7 +1030,7 @@ export default class LevelScene extends Phaser.Scene {
     // безраздельно рулит triggerTip (пивот на углу, не в центре) — sprite-
     // геометрия молчит, чтобы не воевать за один transform каждый кадр
     // твина. Как только выровняется (tipState 0), снова её слово.
-    if (target.item && target.item.tippable && target.item.tipState) return;
+    if (target.item && target.item.tippable && (target.item.tipState || target.item.tipAngle)) return;
     img.setScale(geo.scaleMul).setFlipX(geo.mirror);
     const baseX = target.kind === 'point' ? target.defaults.x : target.item.x;
     const baseY = target.kind === 'point' ? target.defaults.y : target.item.y;
@@ -1066,6 +1131,8 @@ export default class LevelScene extends Phaser.Scene {
   triggerTip(item, direction) {
     const target = this.itemTargets.get(item);
     if (!target) return;
+    const previousSide = item.tipPivotSide || 1;
+    const previousAngle = item.tipAngle || (previousSide * BALANCE.TIP_ANGLE);
     item.tipState = direction;
     item.tipContacts.left = 0;
     item.tipContacts.right = 0;
@@ -1080,27 +1147,61 @@ export default class LevelScene extends Phaser.Scene {
     // вокруг того же пивота — из-за этого она «не совпадала с эталонным
     // спрайтом» в состоянии завала (жалоба): теперь она просто ДРУГАЯ,
     // независимо настраиваемая линия для этого состояния.
+    // Сначала подключаем геометрию нужного состояния. Её координаты
+    // локальны спрайту; surfaceLine() вращает их вокруг той же опоры.
+    this.syncTargetToItemState(item);
+
     const img = target.image;
     if (img) {
       this.tweens.killTweensOf(img);
       if (direction === 0) {
+        item.tipAngle = previousAngle;
         this.tweens.add({
           targets: img, angle: 0, duration: BALANCE.TIP_TWEEN_MS, ease: 'Back.easeOut',
-          onComplete: () => img.setOrigin(0.5, 0.5).setPosition(item.x, item.y)
+          onUpdate: () => {
+            item.tipAngle = img.angle;
+            this.applySurfaceTarget(target);
+            if (this.surfaceDebugMode) this.redrawSurfaceDebug();
+          },
+          onComplete: () => {
+            item.tipAngle = 0;
+            img.setOrigin(0.5, 0.5);
+            this.applySpriteGeometry(target);
+            this.applySurfaceTarget(target);
+          }
         });
       } else {
         const size = target.size;
-        const pivotX = direction === -1 ? item.x - size.w / 2 : item.x + size.w / 2;
-        const pivotY = item.y + size.h / 2;
-        img.setOrigin(direction === -1 ? 0 : 1, 1).setPosition(pivotX, pivotY).setAngle(0);
+        const geo = target.spriteGeo || { scaleMul: 1, mirror: false, offsetX: 0, offsetY: 0 };
+        const scale = geo.scaleMul || 1;
+        const pivotX = item.x + (geo.offsetX || 0) + direction * size.w * scale / 2;
+        const pivotY = item.y + (geo.offsetY || 0) + size.h * scale / 2;
+        img.setScale(scale).setFlipX(!!geo.mirror)
+          .setOrigin(direction === -1 ? 0 : 1, 1)
+          .setPosition(pivotX, pivotY).setAngle(0);
+        item.tipAngle = 0;
         this.tweens.add({
           targets: img, angle: direction === -1 ? -BALANCE.TIP_ANGLE : BALANCE.TIP_ANGLE,
-          duration: BALANCE.TIP_TWEEN_MS, ease: 'Back.easeOut'
+          duration: BALANCE.TIP_TWEEN_MS, ease: 'Back.easeOut',
+          onUpdate: () => {
+            item.tipAngle = img.angle;
+            this.applySurfaceTarget(target);
+            if (this.surfaceDebugMode) this.redrawSurfaceDebug();
+          },
+          onComplete: () => {
+            item.tipAngle = direction * BALANCE.TIP_ANGLE;
+            this.applySurfaceTarget(target);
+          }
         });
       }
     }
 
-    this.syncTargetToItemState(item);
+    // В игровом режиме кот теряет опору в момент начала переворота и
+    // падает под действием физики. В редакторе оставляем его неподвижным,
+    // чтобы не мешать настройке геометрии.
+    if (!this.surfaceDebugMode && direction !== 0 && this.standingOn === item) {
+      this.fallOffTip(item);
+    }
 
     this.say(direction ? pick(['Ого, накренилось!', 'Так, это едет вбок.', 'Ловите равновесие. Не я.'])
       : pick(['Выровнялось обратно.', 'Опять на все четыре ножки.']));
@@ -1334,7 +1435,9 @@ export default class LevelScene extends Phaser.Scene {
   // событиям, не каждый кадр, поэтому «плавное» затухание по времени тут
   // само не перерисуется — нужен явный второй вызов через таймер.
   exportSurfaceDebug() {
-    const json = JSON.stringify(dumpSurfaceGeometry(), null, 2);
+    const snapshot = dumpSurfaceGeometry();
+    saveExportSnapshot(snapshot);
+    const json = JSON.stringify(snapshot, null, 2);
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(json).catch(() => {});
     }
@@ -1719,24 +1822,40 @@ export default class LevelScene extends Phaser.Scene {
     if (hitRect(this.surfaceDebugResetBtn)) {
       const target = this.surfaceDebugSelected;
       if (target) {
+        const stateId = target.item && target.item.tippable
+          ? stateStorageId(target.id, target.stateKey) : target.id;
+        const exported = loadExportSnapshot();
         if (target.kind === 'point') {
-          target.point.x = target.defaults.x;
-          target.point.y = target.defaults.y;
-          target.point.dx = 0;
-          target.point.dy = 0;
+          const point = exported[stateId] || { dx: 0, dy: 0 };
+          target.point.dx = point.dx || 0;
+          target.point.dy = point.dy || 0;
+          target.point.x = target.defaults.x + target.point.dx;
+          target.point.y = target.defaults.y + target.point.dy;
+          saveHangPoint(stateId, target.point);
+          target.savedPoint = { ...target.point };
         } else {
-          target.surface = { ...target.defaults };
+          target.surface = { ...target.defaults, ...(exported[stateId] || {}) };
+          if (target.item && target.item.tippable && target.stateKey === 'tipped') {
+            target.surface = localizeLegacyTippedSurface(target.surface, target.size);
+          }
+          target.surface = saveSurfaceGeometry(stateId, target.surface);
+          target.savedSurface = { ...target.surface };
           if (target.item && target.item.surfaceStates) {
             target.item.surfaceStates[target.stateKey] = target.surface;
           }
         }
         if (target.spriteGeo) {
-          target.spriteGeo = { ...target.spriteDefaults };
+          target.spriteGeo = {
+            ...target.spriteDefaults,
+            ...(exported['sprite:' + stateId] || {})
+          };
+          target.spriteGeo = saveSpriteGeometry('sprite:' + stateId, target.spriteGeo);
+          target.savedSpriteGeo = { ...target.spriteGeo };
           if (target.item && target.item.spriteStates) {
             target.item.spriteStates[target.stateKey] = target.spriteGeo;
           }
         }
-        target.dirty = this.computeTargetDirty(target);
+        target.dirty = false;
         this.applySurfaceTarget(target);
         this.redrawSurfaceDebug();
       }
@@ -1814,18 +1933,21 @@ export default class LevelScene extends Phaser.Scene {
     if (drag.kind === 'vertical') {
       // Тащим середину линии — обе высоты сдвигаются одинаково, наклон
       // (разница между ними) сохраняется как есть.
+      const local = this.surfaceLocalPoint(target, p.x, p.y);
+      const meanTilt = ((target.surface.tiltLeft || 0) + (target.surface.tiltRight || 0)) / 2;
       const newInset = Math.round(Phaser.Math.Clamp(
-        p.y - target.visualTop, -30, target.size.h + 30
+        local.y - meanTilt, -30, target.size.h + 30
       ));
       target.surface.inset = newInset;
     } else {
-      const relativeX = Math.round(p.x - target.centerX);
+      const local = this.surfaceLocalPoint(target, p.x, p.y);
+      const relativeX = Math.round(local.x);
       // Наклон — тянем КОНКРЕТНЫЙ край не только вбок (длина), но и вверх/
       // вниз: высота этого края относительно общего inset — то же самое
       // «абсолютно от пальца», что и у 'vertical' (двигает inset целиком),
       // просто на один край, а не на всю линию сразу.
       const relY = Math.round(Phaser.Math.Clamp(
-        p.y - target.visualTop - target.surface.inset, -120, 120
+        local.y - target.surface.inset, -120, 120
       ));
       if (drag.kind === 'left') {
         target.surface.left = Phaser.Math.Clamp(
@@ -2116,9 +2238,7 @@ export default class LevelScene extends Phaser.Scene {
           duration: 640, ease: 'Quad.easeOut',
           onComplete: () => {
             thrown.destroy();
-            this.runFish += BALANCE.FEED_FISH;
-            addFish(BALANCE.FEED_FISH);
-            this.updateHud();
+            this.earnFish('feed:owner', BALANCE.FEED_FISH);
             this.say(pick(FEEDING.cat));
           }
         });
@@ -2327,12 +2447,7 @@ export default class LevelScene extends Phaser.Scene {
       if (!sp.active || !sp.getData('live')) return;   // ещё в аквариуме или в полёте
       if (Phaser.Math.Distance.Between(this.cat.x, this.cat.y, sp.x, sp.y) < 30) {
         const n = sp.getData('fish');
-        this.runFish += n;
-        const s = load();
-        s.stashTaken.push(sp.getData('index'));
-        s.fish += n;
-        save(s);
-        this.updateHud();
+        this.earnFish(sp.getData('claimId'), n);
         this.say('Заначка. Я про неё помнил.');
         sp.destroy();
       }
@@ -2469,6 +2584,7 @@ export default class LevelScene extends Phaser.Scene {
     // в обоих случаях обычная реплика приземления (в конце land()) молчит,
     // чтобы не перекрыть её сразу же.
     let tipReaction = false;
+    let tipTriggered = false;
     const tipTarget = item.tippable ? this.itemTargets.get(item) : null;
     if (tipTarget) {
       const line = this.surfaceLine(tipTarget);
@@ -2478,6 +2594,7 @@ export default class LevelScene extends Phaser.Scene {
         item.tipContacts.left++;
         if (item.tipContacts.left >= BALANCE.TIP_CONTACTS_REQUIRED) {
           this.triggerTip(item, item.tipState === 0 ? -1 : 0);
+          tipTriggered = true;
         } else {
           this.say(pick(TIP_HINTS[item.tipContacts.left - 1] || TIP_HINTS[TIP_HINTS.length - 1]));
         }
@@ -2486,12 +2603,17 @@ export default class LevelScene extends Phaser.Scene {
         item.tipContacts.right++;
         if (item.tipContacts.right >= BALANCE.TIP_CONTACTS_REQUIRED) {
           this.triggerTip(item, item.tipState === 0 ? 1 : 0);
+          tipTriggered = true;
         } else {
           this.say(pick(TIP_HINTS[item.tipContacts.right - 1] || TIP_HINTS[TIP_HINTS.length - 1]));
         }
         tipReaction = true;
       }
     }
+
+    // triggerTip уже отпустил кота в свободное падение. Не выполняем ниже
+    // обычную фиксацию на площадке, иначе она тут же приклеит его обратно.
+    if (tipTriggered) return;
 
     // Ставим лапы ровно на поверхность. Наклонная линия — не только у
     // заваленного tippable-предмета, но и у ЛЮБОГО со статичным наклоном
@@ -2541,9 +2663,7 @@ export default class LevelScene extends Phaser.Scene {
 
     if (!this.visited.includes(item.id) && item.fish) {
       this.visited.push(item.id);
-      this.runFish += item.fish;
-      addFish(item.fish);
-      this.updateHud();
+      this.earnFish(`item:${item.id}`, item.fish);
     }
 
     // --- цель достигнута ---
@@ -2552,11 +2672,14 @@ export default class LevelScene extends Phaser.Scene {
       this.say(pick(item.lines));
       const clean = this.jumps <= BALANCE.CLEAN_JUMP_LIMIT;
       const reward = clean ? BALANCE.TASK_REWARD_CLEAN : BALANCE.TASK_REWARD;
-      addFish(reward);
-      markTaskDone(this.task.id);
+      const awarded = completeRun(
+        Array.from(this.pendingRewards, ([id, fish]) => ({ id, fish })),
+        this.task.id,
+        reward
+      );
       this.time.delayedCall(1500, () => {
         this.scene.start('Result', {
-          task: this.task, reward, clean, jumps: this.jumps, runFish: this.runFish + reward
+          task: this.task, reward: awarded, clean, jumps: this.jumps, runFish: awarded
         });
       });
       return;
@@ -2573,6 +2696,16 @@ export default class LevelScene extends Phaser.Scene {
     // завала или реплика самого triggerTip (tipReaction) — иначе бы её
     // тут же перекрыло.
     if (!tipReaction) this.say(pick(item.lines));
+  }
+
+  // Показываем улов захода сразу, но сохраняем его только при выполнении
+  // задания. Уже оплаченный сегодня источник повторно рыбок не даёт.
+  earnFish(claimId, amount) {
+    if (!claimId || !amount || isClaimed(claimId) || this.pendingRewards.has(claimId)) return false;
+    this.pendingRewards.set(claimId, amount);
+    this.runFish += amount;
+    this.updateHud();
+    return true;
   }
 }
 
@@ -2639,4 +2772,35 @@ function stateKeyOf(item) {
 // с уже сохранёнными правками до этой фичи), остальные — с суффиксом.
 function stateStorageId(itemId, stateKey) {
   return stateKey === 'flat' ? itemId : itemId + ':' + stateKey;
+}
+
+// Экспорты старого редактора хранили линию заваленного предмета уже в
+// мировом положении (после поворота вправо). Новая модель хранит её в
+// локальных координатах спрайта. Конвертируем только узнаваемый старый
+// формат при загрузке; сам пользовательский JSON остаётся неизменным.
+function localizeLegacyTippedSurface(surface, size) {
+  const looksWorldSpace = Math.abs(surface.tiltLeft || 0) + Math.abs(surface.tiltRight || 0) > 50 &&
+    Math.sign(surface.left) === Math.sign(surface.right);
+  if (!looksWorldSpace) return surface;
+  const pivot = { x: size.w / 2, y: size.h / 2 };
+  const angle = Phaser.Math.DegToRad(-BALANCE.TIP_ANGLE);
+  const inverse = (x, y) => {
+    const dx = x - pivot.x, dy = y - pivot.y;
+    return {
+      x: pivot.x + dx * Math.cos(angle) - dy * Math.sin(angle),
+      y: pivot.y + dx * Math.sin(angle) + dy * Math.cos(angle)
+    };
+  };
+  const yBase = -size.h / 2 + surface.inset;
+  const p1 = inverse(surface.left, yBase + (surface.tiltLeft || 0));
+  const p2 = inverse(surface.right, yBase + (surface.tiltRight || 0));
+  const meanY = (p1.y + p2.y) / 2;
+  return {
+    ...surface,
+    inset: Math.round(meanY + size.h / 2),
+    left: Math.round(Math.min(p1.x, p2.x)),
+    right: Math.round(Math.max(p1.x, p2.x)),
+    tiltLeft: Math.round(p1.y - meanY),
+    tiltRight: Math.round(p2.y - meanY)
+  };
 }

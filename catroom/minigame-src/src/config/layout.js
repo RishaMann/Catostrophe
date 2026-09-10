@@ -52,7 +52,7 @@ export function buildLayout(FURNITURE, STASH_POOL) {
   if (akvaFinal) akvaFinal.x = clamp(akvaFinal.x, 235, FIELD.w - 110);
 
   // --- 4. три заначки из пула ---
-  const pool = [...STASH_POOL];
+  const pool = STASH_POOL.map((s, sourceId) => ({ ...s, sourceId }));
   const stash = [];
   for (let i = 0; i < 3 && pool.length; i++) {
     const s = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];

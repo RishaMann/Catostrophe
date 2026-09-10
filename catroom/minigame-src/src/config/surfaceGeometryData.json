@@ -1,7 +1,21 @@
 {
-  "krovat": {
-    "inset": 33,
-    "left": -125,
-    "right": 125
-  }
+  "krovat": { "inset": 33, "left": -111, "right": 102, "tiltLeft": -2, "tiltRight": -2, "slideSpeed": 10 },
+  "akvarium": { "inset": 1, "left": -48, "right": 47, "slideSpeed": 10 },
+  "sprite:akvarium": { "scaleMul": 1, "mirror": false, "offsetX": 0, "offsetY": 0 },
+  "sprite:krovat": { "scaleMul": 1, "mirror": false, "offsetX": 0, "offsetY": 0 },
+  "shkaf": { "inset": 26, "left": -62, "right": 63, "tiltLeft": 1, "tiltRight": 1, "slideSpeed": 10 },
+  "sprite:shkaf": { "scaleMul": 1, "mirror": false, "offsetX": 0, "offsetY": 0 },
+  "hozyain": { "inset": -8, "left": -68, "right": 89, "tiltLeft": 0, "tiltRight": 16 },
+  "stol": { "inset": 19, "left": -65, "right": 65, "slideSpeed": 10 },
+  "sprite:stol": { "scaleMul": 1, "mirror": false, "offsetX": 0, "offsetY": 0 },
+  "hang:okno": { "dx": 3, "dy": 112 },
+  "sprite:hang:okno": { "scaleMul": 1, "mirror": false, "offsetX": 0, "offsetY": 0 },
+  "komod": { "inset": 7, "left": -42, "right": 42, "slideSpeed": 10 },
+  "sprite:komod": { "scaleMul": 1, "mirror": false, "offsetX": 0, "offsetY": 0 },
+  "tumba": { "inset": 8, "left": -32, "right": 25, "slideSpeed": 10 },
+  "sprite:tumba": { "scaleMul": 1, "mirror": false, "offsetX": 0, "offsetY": 0 },
+  "stol:tipped": { "inset": 3, "left": 56, "right": 119, "tiltLeft": -63, "tiltRight": 40, "slideSpeed": 10 },
+  "sprite:stol:tipped": { "scaleMul": 1, "mirror": false, "offsetX": 0, "offsetY": 0 },
+  "hang:chandelier": { "dx": 6, "dy": 12 },
+  "sprite:hang:chandelier": { "scaleMul": 1, "mirror": false, "offsetX": 0, "offsetY": 0 }
 }

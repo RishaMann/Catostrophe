@@ -11,12 +11,17 @@ const KEY = 'cat-game-save-v1';
 const DEFAULT = {
   fish: 0,               // рыбки
   tasksDoneToday: [],    // id заданий, выполненных сегодня
-  day: null,             // какой сегодня день (чтобы сбрасывать список заданий)
-  stashTaken: []         // какие заначки уже собраны за сегодня
+  day: null,             // московская дата текущего периода наград
+  dailyClaims: [],       // источники рыбок, уже оплаченные за этот период
+  stashTaken: []         // старое поле: совместимость сохранений
 };
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date());
+  const get = type => parts.find(p => p.type === type).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 export function load() {
@@ -31,6 +36,7 @@ export function load() {
   if (state.day !== today()) {
     state.day = today();
     state.tasksDoneToday = [];
+    state.dailyClaims = [];
     state.stashTaken = [];
     save(state);
   }
@@ -50,6 +56,31 @@ export function addFish(n) {
   s.fish += n;
   save(s);
   return s.fish;
+}
+
+export function isClaimed(claimId) {
+  return load().dailyClaims.includes(claimId);
+}
+
+// Весь улов захода попадает в профиль только после успешного задания.
+// Каждый источник оплачивается максимум один раз за московские сутки.
+export function completeRun(rewards, taskId, taskReward) {
+  const s = load();
+  let awarded = 0;
+  rewards.forEach(({ id, fish }) => {
+    if (!id || !fish || s.dailyClaims.includes(id)) return;
+    s.dailyClaims.push(id);
+    awarded += fish;
+  });
+  const taskClaim = `task:${taskId}`;
+  if (taskReward && !s.dailyClaims.includes(taskClaim)) {
+    s.dailyClaims.push(taskClaim);
+    awarded += taskReward;
+  }
+  s.fish += awarded;
+  if (!s.tasksDoneToday.includes(taskId)) s.tasksDoneToday.push(taskId);
+  save(s);
+  return awarded;
 }
 
 // Полный сброс. Нужен, пока мы тестируем: задания за день выполняются
