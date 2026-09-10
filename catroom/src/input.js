@@ -246,6 +246,7 @@
         const gb = this.hitBtn(this.geoBtns || [], x, y);
         if (gb) {
           if (gb.id === 'geoSave') this.geoSaveCurrent();
+          else if (gb.id === 'geoExport') this.geoExportCurrent();
           else this.geoResetCurrent(); // geoReset и geoAuto — оба откат к автоматике
           return;
         }

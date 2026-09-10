@@ -267,6 +267,27 @@
       root.AssetGeometry.clearLive();
       this.uiDirty = true;
     },
+    // Export — «испечь» текущие правки (base-файл + localStorage этой
+    // сессии, см. AssetGeometry.dumpMerged) в JSON, который надо вручную
+    // вставить в src/room/assetGeometryData.json и закоммитить. Save выше
+    // пишет только в localStorage — это per-браузер черновик, его не видят
+    // ни другие игроки, ни даже та же сессия с другого порта/origin (см.
+    // шапку assetGeometry.js). Файл — расшаренный источник истины: то, что
+    // в нём, автоматически становится дефолтом для ВСЕХ игроков после
+    // деплоя, без всякого localStorage на их стороне.
+    geoExportCurrent() {
+      const json = JSON.stringify(root.AssetGeometry.dumpMerged(), null, 2);
+      // Буфер обмена — основной путь, но недоступен без пользовательского
+      // жеста в part браузеров/контекстов; консоль — надёжный запасной
+      // вариант, из неё тоже можно скопировать вручную.
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(json).catch(() => {});
+      }
+      console.log('[AssetGeometry] Вставьте в src/room/assetGeometryData.json и закоммитьте — правки увидят все игроки:\n' + json);
+      this.geoExportFlashUntil = (this.time ? this.time.now : 0) + 1400;
+      this.uiDirty = true;
+    },
+
     // Reset и «Auto» — одно и то же действие (откатить к автоматическому
     // анализу): отдельной сохранённой «авто-геометрии» не существует, авто
     // всегда пересчитывается на лету (resolveCatGeometry/autoFurniture),
@@ -430,7 +451,10 @@
       if (sel && sel.kind === 'cat') { rows += allKeys0.length > 1 ? 1 : 0; rows += 1; /* frames toggle */ }
       else if (allKeys0.length > 1) { rows += 1; /* state cycle */ }
       const hasChkRow = sel && ((sel.kind === 'cat') || allKeys0.length > 1);
-      const S = { x: this.geoPanelPos.x, y: this.geoPanelPos.y, w: 300, h: !sel ? 60 : 96 + rows * 38 + (hasChkRow ? 34 : 0) + 64 };
+      // +34 — отдельная полноширинная строка «Экспорт» под Save/Reset/Auto
+      // (см. ниже, geoExportCurrent) — не влезает в их ряд (300px панель,
+      // три кнопки по 84px уже впритык).
+      const S = { x: this.geoPanelPos.x, y: this.geoPanelPos.y, w: 300, h: !sel ? 60 : 96 + 34 + rows * 38 + (hasChkRow ? 34 : 0) + 64 };
       g.fillStyle(COL.panel, 0.95); g.fillRoundedRect(S.x, S.y, S.w, S.h, 10);
       g.lineStyle(1.1, COL.amber, 0.75); g.strokeRoundedRect(S.x, S.y, S.w, S.h, 10);
       // Шапка — вся полоса заголовка (за вычетом крестика) — то, за что
@@ -489,7 +513,23 @@
         { id: 'geoAuto', x: autoX, y: by, w: bw, h: bh }
       ];
 
-      let extraBottom = by + bh;
+      // Экспорт — отдельной строкой: пишет base+localStorage-слепок в буфер
+      // обмена/консоль (geoExportCurrent), чтобы вставить в
+      // assetGeometryData.json и закоммитить. Save выше сохраняет только в
+      // localStorage ЭТОГО браузера — другие игроки его не увидят вообще.
+      const exportY = by + bh + 8, exportH = 26;
+      const exportFlashT = this.geoExportFlashUntil
+        ? Math.max(0, (this.geoExportFlashUntil - (this.time ? this.time.now : 0)) / 1400) : 0;
+      let exCol = COL.chalk, exFillA = 0.06, exLineA = 0.3, exTextCol = '#EBE2D5aa';
+      if (exportFlashT > 0) { exCol = 0x8FD16A; exFillA = 0.15 + 0.35 * exportFlashT; exLineA = 1; exTextCol = '#EBE2D5'; }
+      g.fillStyle(exCol, exFillA); g.fillRoundedRect(S.x + 12, exportY, S.w - 24, exportH, 7);
+      g.lineStyle(1, exCol, exLineA); g.strokeRoundedRect(S.x + 12, exportY, S.w - 24, exportH, 7);
+      this.tUI.put(S.x + 12 + (S.w - 24) / 2, exportY + exportH / 2,
+        exportFlashT > 0 ? 'Скопировано ✓ (см. консоль)' : 'Экспорт правок → assetGeometryData.json',
+        9, exTextCol, 'center');
+      this.geoBtns.push({ id: 'geoExport', x: S.x + 12, y: exportY, w: S.w - 24, h: exportH });
+
+      let extraBottom = exportY + exportH;
       this.geoFramesBtn = null; this.geoStateBtn = null; this.geoCatFrameBtn = null;
       this.geoMoveChk = null; this.geoApplyAllChk = null;
       const allKeys = this.geoAllStateKeys(sel);

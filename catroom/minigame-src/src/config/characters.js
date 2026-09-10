@@ -24,7 +24,14 @@ const SIAMESE_STATES = {
   hit:    { texture: 'cat-Siamese-key-12' },
   walk:   { animation: 'cat:Siamese:walk' },
   crawl:  { animation: 'cat:Siamese:crawl' },
-  flatCrawl: { animation: 'cat:Siamese:flat-crawl' }
+  flatCrawl: { animation: 'cat:Siamese:flat-crawl' },
+  // Сидит неподвижно на поверхности предмета (пока в основном для
+  // наклонных/перевёрнутых, см. item.tippable в LevelScene) — вторая
+  // строка листа movement.png, 1-й кадр строки = статика, 2-4-й — сползание
+  // (sitSlide). Разворот лапами к склону — не отдельные кадры, а поворот
+  // спрайта на угол линии (LevelScene.syncCatVisual/tipLineAngleDeg).
+  sit:      { texture: 'cat-Siamese-movement', frame: 5, size: { w: 72, h: 56 } },
+  sitSlide: { animation: 'cat:Siamese:sit-slide', size: { w: 72, h: 56 } }
 };
 
 const FALLBACK_STATES = name => ({
@@ -41,7 +48,11 @@ const FALLBACK_STATES = name => ({
   hit:    { texture: `cat-${name}-hit` },
   walk:   { animation: `cat:${name}:walk` },
   crawl:  { animation: `cat:${name}:walk`, rate: 7 },
-  flatCrawl: { texture: `cat-${name}-hit` }
+  flatCrawl: { texture: `cat-${name}-hit` },
+  // У Redfat/Labra нет листа movement.png — ближайшая замена без новой
+  // графики: обычная поза/анимация ходьбы.
+  sit:      { texture: `cat-${name}-idle` },
+  sitSlide: { animation: `cat:${name}:walk`, rate: 6 }
 });
 
 export const CHARACTERS = {
@@ -94,6 +105,13 @@ export function registerCharacterAnimations(scene) {
     'cat:Siamese:flat-crawl',
     scene.anims.generateFrameNumbers('cat-Siamese-movement', { start: 10, end: 14 }),
     7
+  );
+  // Сползание по наклонной поверхности — 2-я строка листа, кадры 2-4
+  // (индексы 6-8: кадр 5 в той же строке — статичная поза, см. state 'sit').
+  create(
+    'cat:Siamese:sit-slide',
+    scene.anims.generateFrameNumbers('cat-Siamese-movement', { start: 6, end: 8 }),
+    6
   );
 
   ['Redfat', 'Labra'].forEach(name => {

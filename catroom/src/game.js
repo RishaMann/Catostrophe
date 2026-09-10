@@ -182,6 +182,7 @@
       this.geoPanelDrag = null;
       this.geoShowFrames = false;
       this.geoSaveFlashUntil = 0; // «вспышка» на кнопке Save после сохранения
+      this.geoExportFlashUntil = 0; // то же для кнопки Export (geoExportCurrent)
       this.drag = null;
       this.listSwipeStart = null; // см. checkListSwipe (input.js)
       this.openingDrag = null; // 'door' | 'window' | null — см. dragOpening()
